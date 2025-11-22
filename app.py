@@ -2,25 +2,32 @@ import streamlit as st
 import pandas as pd
 import joblib
 
-# Load the trained model pipeline
-pipe = joblib.load("diabetes_model.joblib")
+# ===========================
+# Load trained models
+# ===========================
+pipe_diab = joblib.load("diabetes_model.joblib")
+pipe_ckd  = joblib.load("ckd_model.joblib")
+pipe_cvd  = joblib.load("cvd_model.joblib")
 
-st.set_page_config(page_title="Diabetes Risk Tool", page_icon="🩺")
-st.title("Non-Dietary Diabetes Risk Assessment")
-st.caption("Research prototype. Not for clinical use.")
+st.set_page_config(page_title="Non-Dietary Chronic Disease Risk Tool", page_icon="🧬")
 
-# ---- User Inputs ----
+st.title("Non-Dietary Chronic Disease Risk Assessment Tool")
+st.caption("Research prototype based on NHANES 2011–2020. Not for clinical use.")
+
+# ===========================
+# UI inputs
+# ===========================
 col1, col2 = st.columns(2)
 
 with col1:
     age = st.number_input("Age (years)", 18, 90, 45)
-    bmi = st.number_input("BMI (kg/m²)", 10.0, 60.0, 27.0)
-    waist = st.number_input("Waist circumference (cm)", 40.0, 200.0, 95.0)
-    sbp = st.number_input("Average systolic BP (mmHg)", 80, 220, 120)
+    bmi = st.number_input("BMI (kg/m²)", 15.0, 60.0, 27.0)
+    waist = st.number_input("Waist circumference (cm)", 50.0, 200.0, 95.0)
+    sbp = st.number_input("Avg systolic BP (mmHg)", 80, 220, 120)
 
 with col2:
-    dbp = st.number_input("Average diastolic BP (mmHg)", 40, 140, 75)
-    hr = st.number_input("Average resting heart rate (bpm)", 40, 150, 70)
+    dbp = st.number_input("Avg diastolic BP (mmHg)", 40, 140, 75)
+    hr = st.number_input("Resting heart rate (bpm)", 40, 140, 70)
     smoker = st.selectbox("Current smoker?", ["No", "Yes"])
     activity = st.selectbox("Physical activity level", ["Low", "Moderate", "High"])
 
@@ -30,25 +37,28 @@ col3, col4 = st.columns(2)
 with col3:
     gender = st.selectbox("Gender", ["Male", "Female"])
 with col4:
-    race = st.selectbox(
-        "Race/ethnicity",
-        ["Non-Hispanic White", "Non-Hispanic Black", "Hispanic", "Other"]
-    )
+    race = st.selectbox("Race/ethnicity", ["Non-Hispanic White", "Non-Hispanic Black", "Hispanic", "Other"])
 
-# Map UI choices → NHANES codes
+# ===========================
+# Encoding maps
+# ===========================
+smoke_map = {"No": 0, "Yes": 1}
+activity_map = {"Low": 0, "Moderate": 1, "High": 2}
 gender_map = {"Male": 1, "Female": 2}
 race_map = {
     "Non-Hispanic White": 1,
     "Non-Hispanic Black": 2,
     "Hispanic": 3,
-    "Other": 4,
+    "Other": 4
 }
-smoke_map = {"No": 0, "Yes": 1}
-activity_map = {"Low": 1, "Moderate": 2, "High": 3}
 
-# ---- Prediction Button ----
-if st.button("Estimate diabetes risk"):
-    X_raw = pd.DataFrame([{
+# ===========================
+# Prediction button
+# ===========================
+if st.button("Estimate risks"):
+    
+    # Build inference row
+    X = pd.DataFrame([{
         "bmi": bmi,
         "AgeYears": age,
         "waist_circumference": waist,
@@ -58,24 +68,28 @@ if st.button("Estimate diabetes risk"):
         "avg_diastolic": dbp,
         "avg_HR": hr,
         "FamIncome_to_poverty_ratio": income,
-        "Education": None,  # Placeholder; can add later
+        "Education": None,                 # you did not collect in UI
         "Race": race_map[race],
         "Gender": gender_map[gender],
     }])
 
-    proba = float(pipe.predict_proba(X_raw)[0, 1])
-    st.metric("Estimated current diabetes risk", f"{proba*100:.1f}%")
+    # Compute probabilities
+    p_diab = float(pipe_diab.predict_proba(X)[0, 1])
+    p_ckd  = float(pipe_ckd.predict_proba(X)[0, 1])
+    p_cvd  = float(pipe_cvd.predict_proba(X)[0, 1])
 
-    st.caption(
-        "This estimate is based on non-dietary predictors only and is intended "
-        "for research and educational purposes, not for diagnosis or treatment."
-    )
+    # Display results in columns
+    r1, r2, r3 = st.columns(3)
 
-# ---- Footer ----
+    r1.metric("Diabetes Risk", f"{p_diab*100:.1f}%")
+    r2.metric("CKD Risk", f"{p_ckd*100:.1f}%")
+    r3.metric("CVD Risk", f"{p_cvd*100:.1f}%")
+
+    st.caption("These estimates are based solely on non-dietary predictors "
+               "(anthropometrics, vital signs, sociodemographics).")
+
+# Footer
 st.markdown("---")
-st.markdown("**Model details**")
-st.markdown(
-    "- Model: Bagged decision trees with preprocessing pipeline\n"
-    "- Training data: NHANES 2011–2016, validated on 2017–2020\n"
-    "- Inputs: anthropometrics, vital signs, sociodemographics"
-)
+st.markdown("**Model info**")
+st.markdown("- Bagged decision trees with preprocessing pipeline")
+st.markdown("- Inputs mirror NHANES preprocessing pipeline exactly")
