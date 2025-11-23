@@ -47,23 +47,41 @@ st.write(f"**Calculated BMI:** {bmi:.1f} kg/m²")
 # ============================================================
 st.subheader("Socioeconomic Variables")
 
+# Federal poverty guidelines for 48 contiguous states & D.C.
+BASE_POVERTY_48 = {
+    1: 15650,
+    2: 21150,
+    3: 26650,
+    4: 32150,
+    5: 37650,
+    6: 43150,
+    7: 48650,
+    8: 54150,
+}
+EXTRA_PER_PERSON_48 = 5500
+
 colF1, colF2 = st.columns(2)
 
 with colF1:
     family_income = st.number_input("Annual family income (USD)", 0, 300000, 60000)
 
 with colF2:
-    poverty_threshold = st.number_input(
-        "Poverty threshold for your household size (USD)",
-        5000, 60000, 15000,
-        help="Use official U.S. poverty guidelines for your household size."
-    )
+    household_size = st.selectbox("Household size", list(range(1, 13)), index=3)
+
+# Compute poverty threshold automatically (48 contiguous states)
+if household_size <= 8:
+    poverty_threshold = BASE_POVERTY_48[household_size]
+else:
+    poverty_threshold = BASE_POVERTY_48[8] + EXTRA_PER_PERSON_48 * (household_size - 8)
+
+st.write(f"**Estimated poverty threshold (48 states, {household_size} people):** "
+         f"${poverty_threshold:,.0f}")
 
 income_ratio = family_income / poverty_threshold if poverty_threshold > 0 else 0
 st.write(f"**Income-to-poverty ratio:** {income_ratio:.2f}")
 
 # ============================================================
-#                 DEMOGRAPHICS & VITAL SIGNS
+#                 DEMOGRAPHICS & CLINICAL MEASUREMENTS
 # ============================================================
 st.subheader("Demographics & Clinical Measurements")
 
@@ -123,7 +141,7 @@ smoke_map = {"No": 0, "Yes": 1}
 activity_map = {"Low": 0, "Moderate": 1, "High": 2}
 
 # ============================================================
-#                      BUILD FEATURE ROW
+#                      BUILD FEATURE ROW & PREDICT
 # ============================================================
 if st.button("Estimate risks"):
     
@@ -142,15 +160,11 @@ if st.button("Estimate risks"):
         "Gender": gender_map[gender],
     }])
 
-    # ===========================
-    # Calculate risks
-    # ===========================
     p_diab = float(pipe_diab.predict_proba(X)[0, 1])
     p_ckd  = float(pipe_ckd.predict_proba(X)[0, 1])
     p_cvd  = float(pipe_cvd.predict_proba(X)[0, 1])
 
     r1, r2, r3 = st.columns(3)
-
     r1.metric("Diabetes Risk", f"{p_diab*100:.1f}%")
     r2.metric("CKD Risk", f"{p_ckd*100:.1f}%")
     r3.metric("CVD Risk", f"{p_cvd*100:.1f}%")
