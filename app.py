@@ -47,45 +47,6 @@ race_map = {
 smoke_map = {"No": 0, "Yes": 1}
 activity_map = {"Low": 0, "Moderate": 1, "High": 2}
 
-# inverse maps for human-readable subgroup labels
-inv_gender_map = {v: k for k, v in gender_map.items()}
-inv_race_map = {v: k for k, v in race_map.items()}
-inv_education_map = {v: k for k, v in education_map.items()}
-
-# columns used by the model
-feature_cols = [
-    "bmi",
-    "AgeYears",
-    "waist_circumference",
-    "activity_level",
-    "smoking",
-    "avg_systolic",
-    "avg_diastolic",
-    "avg_HR",
-    "FamIncome_to_poverty_ratio",
-    "Education",
-    "Race",
-    "Gender",
-]
-
-# continuous vs categorical for simulator
-numeric_continuous_sim = [
-    "bmi",
-    "AgeYears",
-    "waist_circumference",
-    "avg_systolic",
-    "avg_diastolic",
-    "avg_HR",
-    "FamIncome_to_poverty_ratio",
-]
-categorical_sim = [
-    "activity_level",
-    "smoking",
-    "Education",
-    "Race",
-    "Gender",
-]
-
 
 def compute_poverty_threshold(household_size: int) -> int:
     if household_size <= 8:
@@ -120,78 +81,6 @@ def predict_three(X: pd.DataFrame):
     p_ckd  = pipe_ckd.predict_proba(X)[:, 1]
     p_cvd  = pipe_cvd.predict_proba(X)[:, 1]
     return p_diab, p_ckd, p_cvd
-
-
-# -------------------------------------------------
-# Load NHANES test data for simulator (if available)
-# -------------------------------------------------
-HAS_NHANES = False
-nhanes_sim = None
-
-try:
-    nhanes_raw = pd.read_csv("nhanes_test_for_sim.csv")
-
-    # keep only columns we need
-    missing_cols = [c for c in feature_cols if c not in nhanes_raw.columns]
-    if missing_cols:
-        st.warning(
-            f"NHANES simulation file is missing columns: {missing_cols}. "
-            "Population simulator will fall back to synthetic data."
-        )
-    else:
-        nhanes_sim = nhanes_raw[feature_cols].copy()
-
-        # clean numeric continuous columns: force numeric, impute mean
-        for col in numeric_continuous_sim:
-            nhanes_sim[col] = pd.to_numeric(nhanes_sim[col], errors="coerce")
-            col_mean = nhanes_sim[col].mean(skipna=True)
-            nhanes_sim[col].fillna(col_mean, inplace=True)
-
-        # clean categorical columns: force numeric, impute mode, cast int
-        for col in categorical_sim:
-            nhanes_sim[col] = pd.to_numeric(nhanes_sim[col], errors="coerce")
-            if nhanes_sim[col].isna().all():
-                nhanes_sim[col].fillna(0, inplace=True)
-            else:
-                mode_val = nhanes_sim[col].mode(dropna=True)
-                fill_val = mode_val.iloc[0] if not mode_val.empty else 0
-                nhanes_sim[col].fillna(fill_val, inplace=True)
-            nhanes_sim[col] = nhanes_sim[col].astype(int)
-
-        HAS_NHANES = True
-
-except FileNotFoundError:
-    HAS_NHANES = False
-
-
-def generate_population_from_nhanes(pop_n: int, jitter_frac: float, rng: np.random.Generator):
-    """
-    Sample pop_n individuals from cleaned NHANES test set and apply multiplicative
-    jitter to continuous variables by ±jitter_frac.
-    Returns:
-      base_df: DataFrame of features for prediction
-      human_df: DataFrame with human-readable Gender/Race/Education for subgrouping
-    """
-    n_rows = len(nhanes_sim)
-    idx = rng.integers(0, n_rows, size=pop_n)
-    pop = nhanes_sim.iloc[idx].copy()
-
-    # jitter continuous columns
-    if jitter_frac > 0:
-        for col in numeric_continuous_sim:
-            eps = rng.uniform(-jitter_frac, jitter_frac, size=pop_n)
-            pop[col] = pop[col] * (1.0 + eps)
-
-    base_df = pop[feature_cols].copy()
-
-    # human-readable subgroup labels
-    human_df = pd.DataFrame({
-        "Gender": [inv_gender_map.get(g, str(g)) for g in pop["Gender"]],
-        "Race": [inv_race_map.get(r, str(r)) for r in pop["Race"]],
-        "Education": [inv_education_map.get(e, str(e)) for e in pop["Education"]],
-    })
-
-    return base_df, human_df
 
 
 # ===========================
@@ -356,7 +245,7 @@ with tab_research:
 
     baseline_df = build_feature_df(
         bmi=bmi_r, age=age_r, waist=waist_r,
-        activity_label="Moderate",  # default for research tools
+        activity_label="Moderate",  # default; could expose later
         smoker_label="No",
         sbp=sbp_r, dbp=dbp_r, hr=hr_r,
         income_ratio=income_ratio_r,
@@ -484,7 +373,10 @@ with tab_research:
         horizontal_spacing=0.06
     )
 
-    for idx, z in enumerate([z_diab, z_ckd, z_cvd], start=1):
+    for idx, (name, z) in enumerate(
+        [("Diabetes", z_diab), ("CKD", z_ckd), ("CVD", z_cvd)],
+        start=1
+    ):
         fig_heat.add_trace(
             go.Heatmap(
                 x=x_vals,
@@ -499,10 +391,12 @@ with tab_research:
         coloraxis=dict(colorscale="Viridis", cmin=0.0, cmax=max_risk),
         margin=dict(l=40, r=40, t=40, b=40),
     )
-    for c in [1, 2, 3]:
-        fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=c)
-    for c in [1, 2, 3]:
-        fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=c)
+    fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=1)
+    fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=2)
+    fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=3)
+    fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=1)
+    fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=2)
+    fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=3)
 
     st.plotly_chart(fig_heat, use_container_width=True)
     st.caption(
@@ -513,237 +407,253 @@ with tab_research:
     st.markdown("---")
 
     # ============================================================
-    # 3. Population intervention simulator (NHANES-based)
+    # 3. Population intervention simulator
     # ============================================================
     st.subheader("Population intervention simulator")
 
-    if not HAS_NHANES:
-        st.warning(
-            "NHANES test file `nhanes_test_for_sim.csv` not found or missing required "
-            "columns. The population simulator is disabled."
-        )
-    else:
-        st.markdown(
-            "Simulate a synthetic population by resampling NHANES participants, "
-            "apply a single intervention, and compare predicted risk before and "
-            "after the intervention overall and across subgroups."
-        )
+    st.markdown(
+        "Simulate a synthetic population, apply a single intervention, and "
+        "compare predicted risk before and after the intervention overall and "
+        "across subgroups."
+    )
 
-        colP1, colP2 = st.columns(2)
-        with colP1:
-            pop_n = st.slider(
-                "Population size",
-                500,
-                min(20000, len(nhanes_sim) * 5),
-                3000,
-                step=500,
-                key="pop_n"
-            )
-        with colP2:
-            seed = st.number_input("Random seed", min_value=0, max_value=10000, value=42, key="seed_pop")
+    colP1, colP2 = st.columns(2)
+    with colP1:
+        pop_n = st.slider("Population size", 500, 20000, 3000, step=500, key="pop_n")
+    with colP2:
+        seed = st.number_input("Random seed", min_value=0, max_value=10000, value=42, key="seed_pop")
 
-        jitter_pct = st.slider(
-            "Jitter continuous variables by ±% (to avoid exact duplicates)",
-            0.0, 20.0, 5.0, step=1.0, key="jitter_pct"
-        )
-        jitter_frac = jitter_pct / 100.0
+    rng = np.random.default_rng(seed)
 
-        rng = np.random.default_rng(seed)
-
-        intervention = st.selectbox(
-            "Choose intervention",
-            [
-                "Lower systolic BP",
-                "Lower diastolic BP",
-                "Reduce BMI",
-                "Reduce waist circumference",
-                "Increase income-to-poverty ratio",
-                "Set all smokers to non-smokers",
-            ],
-            index=0
-        )
-
-        delta_val = None
-        if intervention in [
+    intervention = st.selectbox(
+        "Choose intervention",
+        [
             "Lower systolic BP",
             "Lower diastolic BP",
             "Reduce BMI",
             "Reduce waist circumference",
             "Increase income-to-poverty ratio",
-        ]:
-            label = {
-                "Lower systolic BP": "SBP reduction (mmHg)",
-                "Lower diastolic BP": "DBP reduction (mmHg)",
-                "Reduce BMI": "BMI reduction (kg/m²)",
-                "Reduce waist circumference": "Waist reduction (cm)",
-                "Increase income-to-poverty ratio": "Increase in income-to-poverty ratio",
-            }[intervention]
-            default = {
-                "Lower systolic BP": 10.0,
-                "Lower diastolic BP": 5.0,
-                "Reduce BMI": 2.0,
-                "Reduce waist circumference": 5.0,
-                "Increase income-to-poverty ratio": 0.5,
-            }[intervention]
-            max_val = {
-                "Lower systolic BP": 40.0,
-                "Lower diastolic BP": 30.0,
-                "Reduce BMI": 10.0,
-                "Reduce waist circumference": 30.0,
-                "Increase income-to-poverty ratio": 5.0,
-            }[intervention]
-            step = 1.0 if "BP" in intervention or "Waist" in intervention else 0.1
-            delta_val = st.slider(label, 0.0, float(max_val), float(default), step=float(step), key="delta_int")
+            "Set all smokers to non-smokers",
+        ],
+        index=0
+    )
 
-        subgroup_var = st.selectbox(
-            "Subgroup to stratify by",
-            ["Gender", "Race", "Education"]
+    delta_val = None
+    if intervention in [
+        "Lower systolic BP",
+        "Lower diastolic BP",
+        "Reduce BMI",
+        "Reduce waist circumference",
+        "Increase income-to-poverty ratio",
+    ]:
+        label = {
+            "Lower systolic BP": "SBP reduction (mmHg)",
+            "Lower diastolic BP": "DBP reduction (mmHg)",
+            "Reduce BMI": "BMI reduction (kg/m²)",
+            "Reduce waist circumference": "Waist reduction (cm)",
+            "Increase income-to-poverty ratio": "Increase in income-to-poverty ratio",
+        }[intervention]
+        default = {
+            "Lower systolic BP": 10.0,
+            "Lower diastolic BP": 5.0,
+            "Reduce BMI": 2.0,
+            "Reduce waist circumference": 5.0,
+            "Increase income-to-poverty ratio": 0.5,
+        }[intervention]
+        max_val = {
+            "Lower systolic BP": 40.0,
+            "Lower diastolic BP": 30.0,
+            "Reduce BMI": 10.0,
+            "Reduce waist circumference": 30.0,
+            "Increase income-to-poverty ratio": 5.0,
+        }[intervention]
+        step = 1.0 if "BP" in intervention or "Waist" in intervention else 0.1
+        delta_val = st.slider(label, 0.0, float(max_val), float(default), step=float(step), key="delta_int")
+
+    subgroup_var = st.selectbox(
+        "Subgroup to stratify by",
+        ["Gender", "Race", "Education"]
+    )
+
+    if st.button("Run population simulation", key="run_sim"):
+        # ---------- generate synthetic population ----------
+        age_pop = np.clip(rng.normal(loc=50, scale=15, size=pop_n), 18, 90)
+        bmi_pop = np.clip(rng.normal(loc=28, scale=5, size=pop_n), 18, 45)
+        waist_pop = np.clip(rng.normal(loc=100, scale=15, size=pop_n), 60, 150)
+        sbp_pop = np.clip(rng.normal(loc=130, scale=15, size=pop_n), 90, 200)
+        dbp_pop = np.clip(rng.normal(loc=80, scale=10, size=pop_n), 50, 120)
+        hr_pop  = np.clip(rng.normal(loc=72, scale=10, size=pop_n), 50, 110)
+        income_ratio_pop = np.clip(
+            rng.lognormal(mean=np.log(2.0), sigma=0.5, size=pop_n),
+            0.3, 6.0
         )
 
-        if st.button("Run population simulation", key="run_sim"):
-            # ---------- generate population from NHANES + jitter ----------
-            base_df, base_df_human = generate_population_from_nhanes(pop_n, jitter_frac, rng)
+        gender_pop = rng.choice(["Male", "Female"], size=pop_n, p=[0.48, 0.52])
+        race_pop = rng.choice(
+            ["Non-Hispanic White", "Non-Hispanic Black", "Hispanic", "Other"],
+            size=pop_n,
+            p=[0.6, 0.15, 0.18, 0.07]
+        )
+        educ_keys = list(education_map.keys())
+        educ_pop = rng.choice(
+            educ_keys,
+            size=pop_n,
+            p=[0.05, 0.10, 0.25, 0.30, 0.30]
+        )
+        smoking_pop = rng.choice(["No", "Yes"], size=pop_n, p=[0.6, 0.4])
+        activity_pop = rng.choice(["Low", "Moderate", "High"], size=pop_n, p=[0.3, 0.5, 0.2])
 
-            b_diab, b_ckd, b_cvd = predict_three(base_df)
+        base_df = pd.DataFrame({
+            "bmi": bmi_pop,
+            "AgeYears": age_pop,
+            "waist_circumference": waist_pop,
+            "activity_level": [activity_map[a] for a in activity_pop],
+            "smoking": [smoke_map[s] for s in smoking_pop],
+            "avg_systolic": sbp_pop,
+            "avg_diastolic": dbp_pop,
+            "avg_HR": hr_pop,
+            "FamIncome_to_poverty_ratio": income_ratio_pop,
+            "Education": [education_map[e] for e in educ_pop],
+            "Race": [race_map[r] for r in race_pop],
+            "Gender": [gender_map[g] for g in gender_pop],
+        })
 
-            # ---------- apply intervention ----------
-            int_df = base_df.copy()
+        base_df_human = pd.DataFrame({
+            "Gender": gender_pop,
+            "Race": race_pop,
+            "Education": educ_pop,
+        })
 
-            if intervention == "Lower systolic BP" and delta_val is not None:
-                int_df["avg_systolic"] = np.clip(int_df["avg_systolic"] - delta_val, 80, None)
-            elif intervention == "Lower diastolic BP" and delta_val is not None:
-                int_df["avg_diastolic"] = np.clip(int_df["avg_diastolic"] - delta_val, 40, None)
-            elif intervention == "Reduce BMI" and delta_val is not None:
-                int_df["bmi"] = np.clip(int_df["bmi"] - delta_val, 15, None)
-            elif intervention == "Reduce waist circumference" and delta_val is not None:
-                int_df["waist_circumference"] = np.clip(
-                    int_df["waist_circumference"] - delta_val, 50, None
-                )
-            elif intervention == "Increase income-to-poverty ratio" and delta_val is not None:
-                int_df["FamIncome_to_poverty_ratio"] = int_df["FamIncome_to_poverty_ratio"] + delta_val
-            elif intervention == "Set all smokers to non-smokers":
-                int_df["smoking"] = smoke_map["No"]
+        b_diab, b_ckd, b_cvd = predict_three(base_df)
 
-            i_diab, i_ckd, i_cvd = predict_three(int_df)
+        # ---------- apply intervention ----------
+        int_df = base_df.copy()
 
-            # ---------- overall summary ----------
-            overall = pd.DataFrame({
-                "Disease": ["Diabetes", "CKD", "CVD"],
-                "Baseline_mean": [
-                    float(b_diab.mean()), float(b_ckd.mean()), float(b_cvd.mean())
-                ],
-                "Post_mean": [
-                    float(i_diab.mean()), float(i_ckd.mean()), float(i_cvd.mean())
-                ],
-            })
-            overall["Absolute_change"] = overall["Post_mean"] - overall["Baseline_mean"]
-            overall["Relative_change_%"] = 100 * overall["Absolute_change"] / overall["Baseline_mean"]
-
-            st.markdown("**Overall average predicted risk (baseline vs post-intervention)**")
-            st.dataframe(
-                overall.style.format({
-                    "Baseline_mean": "{:.3f}",
-                    "Post_mean": "{:.3f}",
-                    "Absolute_change": "{:.3f}",
-                    "Relative_change_%": "{:.1f}",
-                }),
-                use_container_width=True
+        if intervention == "Lower systolic BP" and delta_val is not None:
+            int_df["avg_systolic"] = np.clip(int_df["avg_systolic"] - delta_val, 80, None)
+        elif intervention == "Lower diastolic BP" and delta_val is not None:
+            int_df["avg_diastolic"] = np.clip(int_df["avg_diastolic"] - delta_val, 40, None)
+        elif intervention == "Reduce BMI" and delta_val is not None:
+            int_df["bmi"] = np.clip(int_df["bmi"] - delta_val, 15, None)
+        elif intervention == "Reduce waist circumference" and delta_val is not None:
+            int_df["waist_circumference"] = np.clip(
+                int_df["waist_circumference"] - delta_val, 50, None
             )
+        elif intervention == "Increase income-to-poverty ratio" and delta_val is not None:
+            int_df["FamIncome_to_poverty_ratio"] = int_df["FamIncome_to_poverty_ratio"] + delta_val
+        elif intervention == "Set all smokers to non-smokers":
+            int_df["smoking"] = smoke_map["No"]
 
-            # ---------- distributions (before vs after) — Plotly 3-panel histograms ----------
-            dist_df = pd.concat([
-                pd.DataFrame({"Risk": b_diab, "Disease": "Diabetes", "Scenario": "Baseline"}),
-                pd.DataFrame({"Risk": i_diab, "Disease": "Diabetes", "Scenario": "Post-intervention"}),
-                pd.DataFrame({"Risk": b_ckd, "Disease": "CKD", "Scenario": "Baseline"}),
-                pd.DataFrame({"Risk": i_ckd, "Disease": "CKD", "Scenario": "Post-intervention"}),
-                pd.DataFrame({"Risk": b_cvd, "Disease": "CVD", "Scenario": "Baseline"}),
-                pd.DataFrame({"Risk": i_cvd, "Disease": "CVD", "Scenario": "Post-intervention"}),
-            ], ignore_index=True)
+        i_diab, i_ckd, i_cvd = predict_three(int_df)
 
-            fig_dist = make_subplots(
-                rows=1, cols=3,
-                subplot_titles=("Diabetes", "CKD", "CVD"),
-                shared_yaxes=True,
-                horizontal_spacing=0.06
+        # ---------- overall summary ----------
+        overall = pd.DataFrame({
+            "Disease": ["Diabetes", "CKD", "CVD"],
+            "Baseline_mean": [
+                float(b_diab.mean()), float(b_ckd.mean()), float(b_cvd.mean())
+            ],
+            "Post_mean": [
+                float(i_diab.mean()), float(i_ckd.mean()), float(i_cvd.mean())
+            ],
+        })
+        overall["Absolute_change"] = overall["Post_mean"] - overall["Baseline_mean"]
+        overall["Relative_change_%"] = 100 * overall["Absolute_change"] / overall["Baseline_mean"]
+
+        st.markdown("**Overall average predicted risk (baseline vs post-intervention)**")
+        st.dataframe(
+            overall.style.format({
+                "Baseline_mean": "{:.3f}",
+                "Post_mean": "{:.3f}",
+                "Absolute_change": "{:.3f}",
+                "Relative_change_%": "{:.1f}",
+            }),
+            use_container_width=True
+        )
+
+        # ---------- NEW: baseline vs post scatter (3 panels) ----------
+        fig_scatter = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=("Diabetes", "CKD", "CVD"),
+            shared_xaxes=False,
+            shared_yaxes=False,
+            horizontal_spacing=0.06
+        )
+
+        diseases = ["Diabetes", "CKD", "CVD"]
+        baseline_arrs = [b_diab, b_ckd, b_cvd]
+        post_arrs = [i_diab, i_ckd, i_cvd]
+
+        for idx, (dname, b_arr, p_arr) in enumerate(zip(diseases, baseline_arrs, post_arrs), start=1):
+            fig_scatter.add_trace(
+                go.Scatter(
+                    x=b_arr,
+                    y=p_arr,
+                    mode="markers",
+                    marker=dict(size=4, opacity=0.4),
+                    showlegend=False
+                ),
+                row=1, col=idx
             )
-
-            diseases = ["Diabetes", "CKD", "CVD"]
-            colors = {
-                "Baseline": "rgba(31,119,180,0.6)",
-                "Post-intervention": "rgba(255,127,14,0.6)"
-            }
-
-            for idx, disease in enumerate(diseases, start=1):
-                dsub = dist_df[dist_df["Disease"] == disease]
-
-                for scenario in ["Baseline", "Post-intervention"]:
-                    mask = dsub["Scenario"] == scenario
-                    fig_dist.add_trace(
-                        go.Histogram(
-                            x=dsub.loc[mask, "Risk"],
-                            name=scenario,
-                            opacity=0.6,
-                            marker_color=colors[scenario],
-                            showlegend=(idx == 1),
-                            nbinsx=40
-                        ),
-                        row=1, col=idx
-                    )
-
-            fig_dist.update_layout(
-                barmode="overlay",
-                margin=dict(l=40, r=40, t=40, b=40),
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=-0.25,
-                    xanchor="center",
-                    x=0.5
-                )
+            # 45-degree reference line
+            min_val = min(b_arr.min(), p_arr.min())
+            max_val = max(b_arr.max(), p_arr.max())
+            fig_scatter.add_trace(
+                go.Scatter(
+                    x=[min_val, max_val],
+                    y=[min_val, max_val],
+                    mode="lines",
+                    line=dict(dash="dash"),
+                    showlegend=False
+                ),
+                row=1, col=idx
             )
-            for c in [1, 2, 3]:
-                fig_dist.update_xaxes(title_text="Predicted risk", row=1, col=c)
-            fig_dist.update_yaxes(title_text="Count", row=1, col=1)
+            fig_scatter.update_xaxes(title_text="Baseline risk", row=1, col=idx)
+            fig_scatter.update_yaxes(title_text="Post-intervention risk", row=1, col=idx)
 
-            st.plotly_chart(fig_dist, use_container_width=True)
+        fig_scatter.update_layout(
+            margin=dict(l=40, r=40, t=40, b=40),
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
 
-            # ---------- subgroup summary ----------
-            st.markdown(f"**Subgroup effects by {subgroup_var}**")
+        # ---------- subgroup summary ----------
+        st.markdown(f"**Subgroup effects by {subgroup_var}**")
 
-            subgroup_series = base_df_human[subgroup_var]
-            df_sub = pd.DataFrame({
-                "Subgroup": subgroup_series,
-                "b_diab": b_diab,
-                "b_ckd": b_ckd,
-                "b_cvd": b_cvd,
-                "i_diab": i_diab,
-                "i_ckd": i_ckd,
-                "i_cvd": i_cvd,
-            })
+        subgroup_series = base_df_human[subgroup_var]
+        df_sub = pd.DataFrame({
+            "Subgroup": subgroup_series,
+            "b_diab": b_diab,
+            "b_ckd": b_ckd,
+            "b_cvd": b_cvd,
+            "i_diab": i_diab,
+            "i_ckd": i_ckd,
+            "i_cvd": i_cvd,
+        })
 
-            grp = df_sub.groupby("Subgroup", as_index=False).mean()
-            grp_long = pd.DataFrame({
-                "Subgroup": np.repeat(grp["Subgroup"].values, 3),
-                "Disease": ["Diabetes", "CKD", "CVD"] * len(grp),
-                "Baseline": np.concatenate([grp["b_diab"], grp["b_ckd"], grp["b_cvd"]]),
-                "Post": np.concatenate([grp["i_diab"], grp["i_ckd"], grp["i_cvd"]]),
-            })
-            grp_long["Absolute_change"] = grp_long["Post"] - grp_long["Baseline"]
+        grp = df_sub.groupby("Subgroup", as_index=False).mean()
+        grp_long = pd.DataFrame({
+            "Subgroup": np.repeat(grp["Subgroup"].values, 3),
+            "Disease": ["Diabetes", "CKD", "CVD"] * len(grp),
+            "Baseline": np.concatenate([grp["b_diab"], grp["b_ckd"], grp["b_cvd"]]),
+            "Post": np.concatenate([grp["i_diab"], grp["i_ckd"], grp["i_cvd"]]),
+        })
+        grp_long["Absolute_change"] = grp_long["Post"] - grp_long["Baseline"]
 
-            sub_chart = (
-                alt.Chart(grp_long)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Subgroup:N", title=subgroup_var),
-                    y=alt.Y("Absolute_change:Q", title="Change in mean risk"),
-                    color=alt.Color("Disease:N", title="Disease"),
-                )
-                .properties(height=300)
+        # grouped (side-by-side) bars using xOffset
+        sub_chart = (
+            alt.Chart(grp_long)
+            .mark_bar()
+            .encode(
+                x=alt.X("Subgroup:N", title=subgroup_var),
+                xOffset="Disease:N",
+                y=alt.Y("Absolute_change:Q", title="Change in mean risk"),
+                color=alt.Color("Disease:N", title="Disease"),
             )
+            .properties(height=300)
+        )
 
-            st.altair_chart(sub_chart, use_container_width=True)
+        st.altair_chart(sub_chart, use_container_width=True)
 
-            st.caption(
-                "Bars show the absolute change in mean modelled risk within each subgroup "
-                "after applying the selected intervention, relative to baseline."
-            )
+        st.caption(
+            "Bars show the absolute change in mean modelled risk within each subgroup "
+            "after applying the selected intervention, relative to baseline."
+        )
