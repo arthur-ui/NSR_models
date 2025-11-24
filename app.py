@@ -570,45 +570,26 @@ with tab_research:
             use_container_width=True
         )
 
-        # ---------- distributions (before vs after) — Plotly 3-panel histograms ----------
-        dist_df = pd.concat([
-            pd.DataFrame({"Risk": b_diab, "Disease": "Diabetes", "Scenario": "Baseline"}),
-            pd.DataFrame({"Risk": i_diab, "Disease": "Diabetes", "Scenario": "Post-intervention"}),
-            pd.DataFrame({"Risk": b_ckd, "Disease": "CKD", "Scenario": "Baseline"}),
-            pd.DataFrame({"Risk": i_ckd, "Disease": "CKD", "Scenario": "Post-intervention"}),
-            pd.DataFrame({"Risk": b_cvd, "Disease": "CVD", "Scenario": "Baseline"}),
-            pd.DataFrame({"Risk": i_cvd, "Disease": "CVD", "Scenario": "Post-intervention"}),
-        ], ignore_index=True)
-
-        fig_dist = make_subplots(
-            rows=1, cols=3,
-            subplot_titles=("Diabetes", "CKD", "CVD"),
-            shared_yaxes=True,
-            horizontal_spacing=0.06
+        # ---------- clearer overall pre vs post comparison (no histograms) ----------
+        fig_mean = go.Figure()
+        fig_mean.add_trace(
+            go.Bar(
+                x=overall["Disease"],
+                y=overall["Baseline_mean"],
+                name="Baseline"
+            )
         )
-
-        diseases = ["Diabetes", "CKD", "CVD"]
-        colors = {"Baseline": "rgba(31,119,180,0.6)", "Post-intervention": "rgba(255,127,14,0.6)"}
-
-        for idx, disease in enumerate(diseases, start=1):
-            dsub = dist_df[dist_df["Disease"] == disease]
-
-            for scenario in ["Baseline", "Post-intervention"]:
-                mask = dsub["Scenario"] == scenario
-                fig_dist.add_trace(
-                    go.Histogram(
-                        x=dsub.loc[mask, "Risk"],
-                        name=scenario,
-                        opacity=0.6,
-                        marker_color=colors[scenario],
-                        showlegend=(idx == 1),
-                        nbinsx=40
-                    ),
-                    row=1, col=idx
-                )
-
-        fig_dist.update_layout(
-            barmode="overlay",
+        fig_mean.add_trace(
+            go.Bar(
+                x=overall["Disease"],
+                y=overall["Post_mean"],
+                name="Post-intervention"
+            )
+        )
+        fig_mean.update_layout(
+            barmode="group",
+            xaxis_title="Disease",
+            yaxis_title="Average predicted risk",
             margin=dict(l=40, r=40, t=40, b=40),
             legend=dict(
                 orientation="h",
@@ -618,12 +599,7 @@ with tab_research:
                 x=0.5
             )
         )
-        fig_dist.update_xaxes(title_text="Predicted risk", row=1, col=1)
-        fig_dist.update_xaxes(title_text="Predicted risk", row=1, col=2)
-        fig_dist.update_xaxes(title_text="Predicted risk", row=1, col=3)
-        fig_dist.update_yaxes(title_text="Count", row=1, col=1)
-
-        st.plotly_chart(fig_dist, use_container_width=True)
+        st.plotly_chart(fig_mean, use_container_width=True)
 
         # ---------- subgroup summary ----------
         st.markdown(f"**Subgroup effects by {subgroup_var}**")
@@ -648,6 +624,7 @@ with tab_research:
         })
         grp_long["Absolute_change"] = grp_long["Post"] - grp_long["Baseline"]
 
+        # grouped (side-by-side) bars per disease within each subgroup
         sub_chart = (
             alt.Chart(grp_long)
             .mark_bar()
@@ -655,6 +632,7 @@ with tab_research:
                 x=alt.X("Subgroup:N", title=subgroup_var),
                 y=alt.Y("Absolute_change:Q", title="Change in mean risk"),
                 color=alt.Color("Disease:N", title="Disease"),
+                xOffset="Disease:N"
             )
             .properties(height=300)
         )
