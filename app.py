@@ -47,6 +47,11 @@ race_map = {
 smoke_map = {"No": 0, "Yes": 1}
 activity_map = {"Low": 0, "Moderate": 1, "High": 2}
 
+# Inverse maps for human-readable subgroup labels
+inv_gender_map = {v: k for k, v in gender_map.items()}
+inv_race_map   = {v: k for k, v in race_map.items()}
+inv_educ_map   = {v: k for k, v in education_map.items()}
+
 
 def compute_poverty_threshold(household_size: int) -> int:
     if household_size <= 8:
@@ -81,6 +86,30 @@ def predict_three(X: pd.DataFrame):
     p_ckd  = pipe_ckd.predict_proba(X)[:, 1]
     p_cvd  = pipe_cvd.predict_proba(X)[:, 1]
     return p_diab, p_ckd, p_cvd
+
+
+# -------------------------------------------------
+# Load NHANES test-set features for simulator
+# -------------------------------------------------
+# This CSV must contain the preprocessed features the models expect.
+nhanes_test = pd.read_csv("nhanes_test_features.csv")
+
+# Numeric columns to jitter / impute with population mean
+numeric_cols_sim = [
+    "bmi",
+    "AgeYears",
+    "waist_circumference",
+    "avg_systolic",
+    "avg_diastolic",
+    "avg_HR",
+    "FamIncome_to_poverty_ratio",
+]
+
+# Precompute population means for numeric columns (for imputation)
+nhanes_means = nhanes_test[numeric_cols_sim].mean()
+
+# Impute any missing numeric values in the NHANES test-set itself
+nhanes_test[numeric_cols_sim] = nhanes_test[numeric_cols_sim].fillna(nhanes_means)
 
 
 # ===========================
@@ -407,14 +436,14 @@ with tab_research:
     st.markdown("---")
 
     # ============================================================
-    # 3. Population intervention simulator
+    # 3. Population intervention simulator (NHANES-based)
     # ============================================================
     st.subheader("Population intervention simulator")
 
     st.markdown(
-        "Simulate a synthetic population, apply a single intervention, and "
-        "compare predicted risk before and after the intervention overall and "
-        "across subgroups."
+        "Simulate a population based on real NHANES test-set individuals, apply a single "
+        "intervention, and compare predicted risk before and after the intervention overall "
+        "and across subgroups."
     )
 
     colP1, colP2 = st.columns(2)
@@ -424,6 +453,12 @@ with tab_research:
         seed = st.number_input("Random seed", min_value=0, max_value=10000, value=42, key="seed_pop")
 
     rng = np.random.default_rng(seed)
+
+    # Jitter control
+    jitter_pct = st.slider(
+        "Max jitter for continuous variables (%)",
+        0.0, 20.0, 5.0, step=0.5, key="jitter_pct"
+    )
 
     intervention = st.selectbox(
         "Choose intervention",
@@ -476,54 +511,29 @@ with tab_research:
     )
 
     if st.button("Run population simulation", key="run_sim"):
-        # ---------- generate synthetic population ----------
-        age_pop = np.clip(rng.normal(loc=50, scale=15, size=pop_n), 18, 90)
-        bmi_pop = np.clip(rng.normal(loc=28, scale=5, size=pop_n), 18, 45)
-        waist_pop = np.clip(rng.normal(loc=100, scale=15, size=pop_n), 60, 150)
-        sbp_pop = np.clip(rng.normal(loc=130, scale=15, size=pop_n), 90, 200)
-        dbp_pop = np.clip(rng.normal(loc=80, scale=10, size=pop_n), 50, 120)
-        hr_pop  = np.clip(rng.normal(loc=72, scale=10, size=pop_n), 50, 110)
-        income_ratio_pop = np.clip(
-            rng.lognormal(mean=np.log(2.0), sigma=0.5, size=pop_n),
-            0.3, 6.0
-        )
+        # ---------- sample real NHANES individuals ----------
+        n_available = nhanes_test.shape[0]
+        idx = rng.integers(0, n_available, size=pop_n)
+        base_df = nhanes_test.iloc[idx].copy()
 
-        gender_pop = rng.choice(["Male", "Female"], size=pop_n, p=[0.48, 0.52])
-        race_pop = rng.choice(
-            ["Non-Hispanic White", "Non-Hispanic Black", "Hispanic", "Other"],
-            size=pop_n,
-            p=[0.6, 0.15, 0.18, 0.07]
-        )
-        educ_keys = list(education_map.keys())
-        educ_pop = rng.choice(
-            educ_keys,
-            size=pop_n,
-            p=[0.05, 0.10, 0.25, 0.30, 0.30]
-        )
-        smoking_pop = rng.choice(["No", "Yes"], size=pop_n, p=[0.6, 0.4])
-        activity_pop = rng.choice(["Low", "Moderate", "High"], size=pop_n, p=[0.3, 0.5, 0.2])
+        # Apply jitter to continuous vars if requested
+        if jitter_pct > 0:
+            frac = jitter_pct / 100.0
+            noise = rng.uniform(-frac, frac, size=(pop_n, len(numeric_cols_sim)))
+            scaled_vals = base_df[numeric_cols_sim].values * (1.0 + noise)
+            base_df[numeric_cols_sim] = scaled_vals
 
-        base_df = pd.DataFrame({
-            "bmi": bmi_pop,
-            "AgeYears": age_pop,
-            "waist_circumference": waist_pop,
-            "activity_level": [activity_map[a] for a in activity_pop],
-            "smoking": [smoke_map[s] for s in smoking_pop],
-            "avg_systolic": sbp_pop,
-            "avg_diastolic": dbp_pop,
-            "avg_HR": hr_pop,
-            "FamIncome_to_poverty_ratio": income_ratio_pop,
-            "Education": [education_map[e] for e in educ_pop],
-            "Race": [race_map[r] for r in race_pop],
-            "Gender": [gender_map[g] for g in gender_pop],
-        })
+        # Impute any missing numeric values with population means
+        base_df[numeric_cols_sim] = base_df[numeric_cols_sim].fillna(nhanes_means)
 
+        # Human-readable subgroup labels
         base_df_human = pd.DataFrame({
-            "Gender": gender_pop,
-            "Race": race_pop,
-            "Education": educ_pop,
+            "Gender": [inv_gender_map.get(int(g), "Unknown") for g in base_df["Gender"]],
+            "Race":   [inv_race_map.get(int(r), "Unknown") for r in base_df["Race"]],
+            "Education": [inv_educ_map.get(int(e), "Unknown") for e in base_df["Education"]],
         })
 
+        # ---------- baseline predictions ----------
         b_diab, b_ckd, b_cvd = predict_three(base_df)
 
         # ---------- apply intervention ----------
@@ -543,6 +553,9 @@ with tab_research:
             int_df["FamIncome_to_poverty_ratio"] = int_df["FamIncome_to_poverty_ratio"] + delta_val
         elif intervention == "Set all smokers to non-smokers":
             int_df["smoking"] = smoke_map["No"]
+
+        # Re-impute after intervention in case we created any NaNs accidentally
+        int_df[numeric_cols_sim] = int_df[numeric_cols_sim].fillna(nhanes_means)
 
         i_diab, i_ckd, i_cvd = predict_three(int_df)
 
@@ -570,26 +583,45 @@ with tab_research:
             use_container_width=True
         )
 
-        # ---------- clearer overall pre vs post comparison (no histograms) ----------
-        fig_mean = go.Figure()
-        fig_mean.add_trace(
-            go.Bar(
-                x=overall["Disease"],
-                y=overall["Baseline_mean"],
-                name="Baseline"
-            )
+        # ---------- pre vs post distributions (Plotly, 3 panels) ----------
+        dist_df = pd.concat([
+            pd.DataFrame({"Risk": b_diab, "Disease": "Diabetes", "Scenario": "Baseline"}),
+            pd.DataFrame({"Risk": i_diab, "Disease": "Diabetes", "Scenario": "Post-intervention"}),
+            pd.DataFrame({"Risk": b_ckd, "Disease": "CKD", "Scenario": "Baseline"}),
+            pd.DataFrame({"Risk": i_ckd, "Disease": "CKD", "Scenario": "Post-intervention"}),
+            pd.DataFrame({"Risk": b_cvd, "Disease": "CVD", "Scenario": "Baseline"}),
+            pd.DataFrame({"Risk": i_cvd, "Disease": "CVD", "Scenario": "Post-intervention"}),
+        ], ignore_index=True)
+
+        fig_dist = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=("Diabetes", "CKD", "CVD"),
+            shared_yaxes=True,
+            horizontal_spacing=0.06
         )
-        fig_mean.add_trace(
-            go.Bar(
-                x=overall["Disease"],
-                y=overall["Post_mean"],
-                name="Post-intervention"
-            )
-        )
-        fig_mean.update_layout(
-            barmode="group",
-            xaxis_title="Disease",
-            yaxis_title="Average predicted risk",
+
+        diseases = ["Diabetes", "CKD", "CVD"]
+        colors = {"Baseline": "rgba(31,119,180,0.6)", "Post-intervention": "rgba(255,127,14,0.6)"}
+
+        for idx, disease in enumerate(diseases, start=1):
+            dsub = dist_df[dist_df["Disease"] == disease]
+
+            for scenario in ["Baseline", "Post-intervention"]:
+                mask = dsub["Scenario"] == scenario
+                fig_dist.add_trace(
+                    go.Histogram(
+                        x=dsub.loc[mask, "Risk"],
+                        name=scenario,
+                        opacity=0.6,
+                        marker_color=colors[scenario],
+                        showlegend=(idx == 1),
+                        nbinsx=40
+                    ),
+                    row=1, col=idx
+                )
+
+        fig_dist.update_layout(
+            barmode="overlay",
             margin=dict(l=40, r=40, t=40, b=40),
             legend=dict(
                 orientation="h",
@@ -599,7 +631,12 @@ with tab_research:
                 x=0.5
             )
         )
-        st.plotly_chart(fig_mean, use_container_width=True)
+        fig_dist.update_xaxes(title_text="Predicted risk", row=1, col=1)
+        fig_dist.update_xaxes(title_text="Predicted risk", row=1, col=2)
+        fig_dist.update_xaxes(title_text="Predicted risk", row=1, col=3)
+        fig_dist.update_yaxes(title_text="Count", row=1, col=1)
+
+        st.plotly_chart(fig_dist, use_container_width=True)
 
         # ---------- subgroup summary ----------
         st.markdown(f"**Subgroup effects by {subgroup_var}**")
@@ -624,7 +661,6 @@ with tab_research:
         })
         grp_long["Absolute_change"] = grp_long["Post"] - grp_long["Baseline"]
 
-        # grouped (side-by-side) bars per disease within each subgroup
         sub_chart = (
             alt.Chart(grp_long)
             .mark_bar()
@@ -632,7 +668,6 @@ with tab_research:
                 x=alt.X("Subgroup:N", title=subgroup_var),
                 y=alt.Y("Absolute_change:Q", title="Change in mean risk"),
                 color=alt.Color("Disease:N", title="Disease"),
-                xOffset="Disease:N"
             )
             .properties(height=300)
         )
