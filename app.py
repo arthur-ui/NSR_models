@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import joblib
 import altair as alt
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # ===========================
 # Load trained models
@@ -205,7 +206,7 @@ with tab_research:
         "models as the main risk calculator."
     )
 
-    # ---------------- Baseline profile for research tools ----------------
+    # ---------------- Baseline profile ----------------
     st.subheader("Baseline profile (held constant for sensitivity analyses)")
     colB1, colB2, colB3 = st.columns(3)
 
@@ -244,7 +245,7 @@ with tab_research:
 
     baseline_df = build_feature_df(
         bmi=bmi_r, age=age_r, waist=waist_r,
-        activity_label="Moderate",  # default; can expose later
+        activity_label="Moderate",
         smoker_label="No",
         sbp=sbp_r, dbp=dbp_r, hr=hr_r,
         income_ratio=income_ratio_r,
@@ -261,7 +262,7 @@ with tab_research:
     st.markdown("---")
 
     # ============================================================
-    # 1. One-dimensional sensitivity curves (all 3 diseases)
+    # 1. One-dimensional sensitivity curves
     # ============================================================
     st.subheader("One-dimensional sensitivity analysis")
 
@@ -315,7 +316,7 @@ with tab_research:
     st.markdown("---")
 
     # ============================================================
-    # 2. Two-variable interaction heatmaps (user-chosen predictors)
+    # 2. Two-variable interaction heatmaps (Plotly)
     # ============================================================
     st.subheader("Two-variable interaction heatmaps")
 
@@ -361,7 +362,7 @@ with tab_research:
 
     h_diab, h_ckd, h_cvd = predict_three(grid_X)
 
-    # reshape for imshow
+    # reshape for heatmaps
     Z_diab = h_diab.reshape(n_y, n_x)
     Z_ckd  = h_ckd.reshape(n_y, n_x)
     Z_cvd  = h_cvd.reshape(n_y, n_x)
@@ -370,30 +371,54 @@ with tab_research:
         np.max([Z_diab.max(), Z_ckd.max(), Z_cvd.max()])
     )
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharex=True, sharey=True)
+    fig = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=("CKD", "CVD", "Diabetes"),
+        shared_xaxes=True, shared_yaxes=True
+    )
 
-    for ax, Z, title in zip(
-        axes,
-        [Z_ckd, Z_cvd, Z_diab],  # order to match your earlier figures if you like
-        ["CKD", "CVD", "Diabetes"]
-    ):
-        im = ax.imshow(
-            Z,
-            origin="lower",
-            extent=[x_min, x_max, y_min, y_max],
-            aspect="auto",
-            vmin=0.0,
-            vmax=max_risk,
-            cmap="viridis",
-        )
-        ax.set_title(title)
-        ax.set_xlabel(heat_x_label)
-    axes[0].set_ylabel(heat_y_label)
+    # CKD
+    fig.add_trace(
+        go.Heatmap(
+            x=x_vals, y=y_vals, z=Z_ckd,
+            colorscale="Viridis",
+            zmin=0.0, zmax=max_risk,
+            showscale=False
+        ),
+        row=1, col=1
+    )
 
-    cbar = fig.colorbar(im, ax=axes.ravel().tolist())
-    cbar.set_label("Predicted risk")
+    # CVD
+    fig.add_trace(
+        go.Heatmap(
+            x=x_vals, y=y_vals, z=Z_cvd,
+            colorscale="Viridis",
+            zmin=0.0, zmax=max_risk,
+            showscale=False
+        ),
+        row=1, col=2
+    )
 
-    st.pyplot(fig)
+    # Diabetes (with shared colorbar)
+    fig.add_trace(
+        go.Heatmap(
+            x=x_vals, y=y_vals, z=Z_diab,
+            colorscale="Viridis",
+            zmin=0.0, zmax=max_risk,
+            colorbar=dict(title="Predicted risk"),
+            showscale=True
+        ),
+        row=1, col=3
+    )
+
+    fig.update_xaxes(title_text=heat_x_label, row=1, col=1)
+    fig.update_xaxes(title_text=heat_x_label, row=1, col=2)
+    fig.update_xaxes(title_text=heat_x_label, row=1, col=3)
+    fig.update_yaxes(title_text=heat_y_label, row=1, col=1)
+
+    fig.update_layout(height=400, margin=dict(l=40, r=50, t=60, b=50))
+
+    st.plotly_chart(fig, use_container_width=True)
     st.caption(
         "Heatmaps show predicted risk across a 2D grid of values for the selected "
         "predictors, with all other variables fixed at the baseline profile."
