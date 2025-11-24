@@ -51,7 +51,7 @@ race_map = {
     "Non-Hispanic White": 1,
     "Non-Hispanic Black": 2,
     "Hispanic": 3,
-    "Other": 4
+    "Other": 4,
 }
 smoke_map = {"No": 0, "Yes": 1}
 activity_map = {"Low": 0, "Moderate": 1, "High": 2}
@@ -93,6 +93,11 @@ SENSITIVITY_RANGES = {
     "avg_HR": (50, 110),
     "FamIncome_to_poverty_ratio": (0.5, 5.0),
 }
+
+# Helper: build DataFrame from baseline dict
+def df_from_baseline(baseline_dict):
+    return pd.DataFrame([baseline_dict])
+
 
 # ===========================
 # Tabs
@@ -183,14 +188,14 @@ with tab_calc:
             "9-11th grade (Includes 12th w/o diploma)",
             "High school graduate/GED or equivalent",
             "Some college or AA degree",
-            "College graduate or above"
-        ]
+            "College graduate or above",
+        ],
     )
 
     gender = st.selectbox("Gender", ["Male", "Female"])
     race = st.selectbox(
         "Race/ethnicity",
-        ["Non-Hispanic White", "Non-Hispanic Black", "Hispanic", "Other"]
+        ["Non-Hispanic White", "Non-Hispanic Black", "Hispanic", "Other"],
     )
 
     # ------------------ Build row & predict ------------------
@@ -240,67 +245,134 @@ with tab_research:
     st.subheader("Researcher tools: sensitivity analysis and risk landscapes")
 
     st.markdown(
-        "This section allows you to explore how the model's predicted risks change as you vary key predictors. "
-        "By default, we use the last profile you entered on the *Risk calculator* tab; if none is available, "
-        "we use a typical baseline profile."
+        "This section lets you explore how predicted risks change as you vary key predictors. "
+        "You can either start from the last profile you entered on the *Risk calculator* tab "
+        "or directly specify a baseline profile here."
     )
 
-    # Get baseline features
-    baseline = st.session_state.get("baseline_features", DEFAULT_BASELINE)
+    # --- get starting baseline (from session or default) ---
+    base_from_calc = st.session_state.get("baseline_features", DEFAULT_BASELINE)
+    baseline = DEFAULT_BASELINE.copy()
+    baseline.update(base_from_calc)
 
-    # Show baseline profile
-    with st.expander("Show baseline profile used in analyses", expanded=False):
-        friendly = {
-            "Age (years)": baseline["AgeYears"],
-            "BMI (kg/m²)": baseline["bmi"],
-            "Waist circumference (cm)": baseline["waist_circumference"],
-            "Systolic BP (mmHg)": baseline["avg_systolic"],
-            "Diastolic BP (mmHg)": baseline["avg_diastolic"],
-            "Heart rate (bpm)": baseline["avg_HR"],
-            "Income-to-poverty ratio": baseline["FamIncome_to_poverty_ratio"],
-            "Smoking (0=No,1=Yes)": baseline["smoking"],
-            "Activity level (0=Low,1=Moderate,2=High)": baseline["activity_level"],
-            "Education (1–5)": baseline["Education"],
-            "Race (1–4)": baseline["Race"],
-            "Gender (1=Male,2=Female)": baseline["Gender"],
+    # ------------------ Baseline editor ------------------
+    st.markdown("### Baseline profile for analyses")
+
+    with st.expander("Edit baseline profile used in analyses", expanded=False):
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            age_r = st.number_input("Age (years)", 18, 90, int(baseline["AgeYears"]), key="rf_age")
+            bmi_r = st.number_input("BMI (kg/m²)", 15.0, 60.0, float(baseline["bmi"]), key="rf_bmi")
+            waist_r = st.number_input("Waist circumference (cm)", 50.0, 200.0,
+                                      float(baseline["waist_circumference"]), key="rf_waist")
+            sbp_r = st.number_input("Systolic BP (mmHg)", 80, 220,
+                                    int(baseline["avg_systolic"]), key="rf_sbp")
+            dbp_r = st.number_input("Diastolic BP (mmHg)", 40, 140,
+                                    int(baseline["avg_diastolic"]), key="rf_dbp")
+        with col_b2:
+            hr_r = st.number_input("Heart rate (bpm)", 40, 140,
+                                   int(baseline["avg_HR"]), key="rf_hr")
+            fipr_r = st.number_input("Income-to-poverty ratio", 0.1, 10.0,
+                                     float(baseline["FamIncome_to_poverty_ratio"]), key="rf_fipr")
+            smoking_r = st.selectbox(
+                "Smoking (0=No, 1=Yes)",
+                options=[0, 1],
+                index=int(baseline["smoking"]),
+                key="rf_smoke",
+            )
+            activity_r = st.selectbox(
+                "Activity (0=Low, 1=Moderate, 2=High)",
+                options=[0, 1, 2],
+                index=int(baseline["activity_level"]),
+                key="rf_act",
+            )
+            education_r = st.selectbox(
+                "Education (1–5)",
+                options=[1, 2, 3, 4, 5],
+                index=int(baseline["Education"]) - 1,
+                key="rf_edu",
+            )
+
+        col_b3, col_b4 = st.columns(2)
+        with col_b3:
+            race_r = st.selectbox(
+                "Race (1–4)",
+                options=[1, 2, 3, 4],
+                index=int(baseline["Race"]) - 1,
+                key="rf_race",
+            )
+        with col_b4:
+            gender_r = st.selectbox(
+                "Gender (1=Male, 2=Female)",
+                options=[1, 2],
+                index=int(baseline["Gender"]) - 1,
+                key="rf_gender",
+            )
+
+    # build research baseline from editor values
+    research_baseline = {
+        "AgeYears": age_r if "age_r" in locals() else baseline["AgeYears"],
+        "bmi": bmi_r if "bmi_r" in locals() else baseline["bmi"],
+        "waist_circumference": waist_r if "waist_r" in locals() else baseline["waist_circumference"],
+        "avg_systolic": sbp_r if "sbp_r" in locals() else baseline["avg_systolic"],
+        "avg_diastolic": dbp_r if "dbp_r" in locals() else baseline["avg_diastolic"],
+        "avg_HR": hr_r if "hr_r" in locals() else baseline["avg_HR"],
+        "FamIncome_to_poverty_ratio": fipr_r if "fipr_r" in locals() else baseline["FamIncome_to_poverty_ratio"],
+        "smoking": smoking_r if "smoking_r" in locals() else baseline["smoking"],
+        "activity_level": activity_r if "activity_r" in locals() else baseline["activity_level"],
+        "Education": education_r if "education_r" in locals() else baseline["Education"],
+        "Race": race_r if "race_r" in locals() else baseline["Race"],
+        "Gender": gender_r if "gender_r" in locals() else baseline["Gender"],
+    }
+
+    with st.expander("View current baseline profile as JSON", expanded=False):
+        show_dict = {
+            "AgeYears": research_baseline["AgeYears"],
+            "BMI": research_baseline["bmi"],
+            "WaistCircumference": research_baseline["waist_circumference"],
+            "SystolicBP": research_baseline["avg_systolic"],
+            "DiastolicBP": research_baseline["avg_diastolic"],
+            "HeartRate": research_baseline["avg_HR"],
+            "IncomeToPovertyRatio": research_baseline["FamIncome_to_poverty_ratio"],
+            "Smoking(0=No,1=Yes)": research_baseline["smoking"],
+            "Activity(0=Low,1=Moderate,2=High)": research_baseline["activity_level"],
+            "Education(1–5)": research_baseline["Education"],
+            "Race(1–4)": research_baseline["Race"],
+            "Gender(1=Male,2=Female)": research_baseline["Gender"],
         }
-        st.json(friendly)
-
-    # Helper: build DataFrame from baseline dict
-    def df_from_baseline(baseline_dict):
-        return pd.DataFrame([baseline_dict])
+        st.json(show_dict)
 
     # ------------------ 1D sensitivity analysis ------------------
     st.markdown("### 1D sensitivity analysis (all three diseases)")
 
     st.markdown(
-        "Select a variable to vary while holding the rest of the profile constant. "
-        "The plot will show predicted risk for **diabetes, CKD, and CVD** as that variable changes."
+        "Select a variable to vary while holding the rest of the baseline profile constant. "
+        "The plot shows predicted risk for **diabetes, CKD, and CVD** as that variable changes."
     )
 
     var_options = list(SENSITIVITY_RANGES.keys())
     var_choice = st.selectbox(
         "Variable to vary",
         options=var_options,
-        format_func=lambda v: VAR_LABELS.get(v, v)
+        format_func=lambda v: VAR_LABELS.get(v, v),
     )
 
     vmin_default, vmax_default = SENSITIVITY_RANGES[var_choice]
 
-    # Choose range and resolution
     col_range1, col_range2 = st.columns(2)
     with col_range1:
         vmin = st.number_input(
             f"Minimum {VAR_LABELS.get(var_choice, var_choice)}",
-            value=float(vmin_default)
+            value=float(vmin_default),
         )
     with col_range2:
         vmax = st.number_input(
             f"Maximum {VAR_LABELS.get(var_choice, var_choice)}",
-            value=float(vmax_default)
+            value=float(vmax_default),
         )
 
-    step = st.number_input("Step size", value=2.0 if var_choice != "FamIncome_to_poverty_ratio" else 0.25, min_value=0.01)
+    default_step = 2.0 if var_choice != "FamIncome_to_poverty_ratio" else 0.25
+    step = st.number_input("Step size", value=default_step, min_value=0.01)
 
     if vmin >= vmax:
         st.error("Minimum must be less than maximum.")
@@ -308,9 +380,9 @@ with tab_research:
         if st.button("Run 1D sensitivity analysis", key="run_1d_sens"):
             x_vals = np.arange(vmin, vmax + 1e-9, step)
 
-            results = []
+            records = []
             for val in x_vals:
-                row = baseline.copy()
+                row = research_baseline.copy()
                 row[var_choice] = float(val)
                 X = df_from_baseline(row)
 
@@ -318,11 +390,13 @@ with tab_research:
                 p_ckd  = float(pipe_ckd.predict_proba(X)[0, 1])
                 p_cvd  = float(pipe_cvd.predict_proba(X)[0, 1])
 
-                results.append({"Variable": val, "Disease": "Diabetes", "Risk": p_diab})
-                results.append({"Variable": val, "Disease": "CKD",      "Risk": p_ckd})
-                results.append({"Variable": val, "Disease": "CVD",      "Risk": p_cvd})
+                records.append({"Variable": val, "Disease": "Diabetes", "Risk": p_diab})
+                records.append({"Variable": val, "Disease": "CKD",      "Risk": p_ckd})
+                records.append({"Variable": val, "Disease": "CVD",      "Risk": p_cvd})
 
-            df_plot = pd.DataFrame(results)
+            df_plot = pd.DataFrame(records)
+            max_risk = float(df_plot["Risk"].max()) if len(df_plot) > 0 else 1.0
+            ymax = min(1.0, max_risk * 1.05) if max_risk > 0 else 1.0
 
             fig_line = px.line(
                 df_plot,
@@ -332,18 +406,24 @@ with tab_research:
                 labels={
                     "Variable": VAR_LABELS.get(var_choice, var_choice),
                     "Risk": "Predicted risk (probability)",
-                    "Disease": "Outcome"
+                    "Disease": "Outcome",
                 },
             )
             fig_line.update_layout(
-                yaxis=dict(range=[0, 1]),
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                yaxis=dict(range=[0, ymax]),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=-0.3,      # move legend further down so it doesn't overlap axes
+                    xanchor="center",
+                    x=0.5,
+                ),
             )
             st.plotly_chart(fig_line, use_container_width=True)
 
     st.markdown("---")
 
-    # ------------------ 2D heatmap (moved here) ------------------
+    # ------------------ 2D heatmap ------------------
     st.markdown("### 2D risk heatmap")
 
     st.markdown(
@@ -353,7 +433,6 @@ with tab_research:
 
     disease_choice = st.selectbox("Disease for heatmap", ["Diabetes", "CKD", "CVD"])
 
-    # Subset of variables for heatmap (keep it manageable)
     heatmap_vars = ["AgeYears", "bmi", "waist_circumference", "avg_systolic", "avg_diastolic"]
 
     col_hx, col_hy = st.columns(2)
@@ -362,20 +441,19 @@ with tab_research:
             "X-axis variable",
             options=heatmap_vars,
             format_func=lambda v: VAR_LABELS.get(v, v),
-            key="x_var_heat"
+            key="x_var_heat",
         )
     with col_hy:
         y_var = st.selectbox(
             "Y-axis variable",
             options=heatmap_vars,
             format_func=lambda v: VAR_LABELS.get(v, v),
-            key="y_var_heat"
+            key="y_var_heat",
         )
 
     if x_var == y_var:
         st.warning("X and Y variables must be different to generate a heatmap.")
     else:
-        # Ranges
         xmin, xmax = SENSITIVITY_RANGES[x_var]
         ymin, ymax = SENSITIVITY_RANGES[y_var]
 
@@ -386,13 +464,13 @@ with tab_research:
             x_min_val = st.number_input(
                 f"X min ({VAR_LABELS.get(x_var, x_var)})",
                 value=float(xmin),
-                key="x_min_heat"
+                key="x_min_heat",
             )
         with col_xr2:
             x_max_val = st.number_input(
                 f"X max ({VAR_LABELS.get(x_var, x_var)})",
                 value=float(xmax),
-                key="x_max_heat"
+                key="x_max_heat",
             )
 
         col_yr1, col_yr2 = st.columns(2)
@@ -400,26 +478,45 @@ with tab_research:
             y_min_val = st.number_input(
                 f"Y min ({VAR_LABELS.get(y_var, y_var)})",
                 value=float(ymin),
-                key="y_min_heat"
+                key="y_min_heat",
             )
         with col_yr2:
             y_max_val = st.number_input(
                 f"Y max ({VAR_LABELS.get(y_var, y_var)})",
                 value=float(ymax),
-                key="y_max_heat"
+                key="y_max_heat",
             )
 
-        grid_res = st.slider("Grid resolution (higher = smoother, slower)", 20, 80, 40)
+        grid_res = st.slider(
+            "Grid resolution (higher = smoother, slower)",
+            min_value=15,
+            max_value=60,
+            value=35,
+        )
 
         if x_min_val >= x_max_val or y_min_val >= y_max_val:
             st.error("Minimums must be less than maximums for both axes.")
         else:
             if st.button("Generate heatmap", key="run_heatmap"):
+                # Vectorized grid generation
                 x_values = np.linspace(x_min_val, x_max_val, grid_res)
                 y_values = np.linspace(y_min_val, y_max_val, grid_res)
+                X_grid, Y_grid = np.meshgrid(x_values, y_values)
 
-                risk_grid = np.zeros((len(y_values), len(x_values)))
+                # Build a DataFrame of all grid points at once
+                n_points = X_grid.size
+                base_array = np.repeat(
+                    pd.DataFrame([research_baseline]).values,
+                    n_points,
+                    axis=0,
+                )
+                base_df = pd.DataFrame(base_array, columns=research_baseline.keys())
 
+                # Override x_var and y_var with flattened grid
+                base_df[x_var] = X_grid.ravel()
+                base_df[y_var] = Y_grid.ravel()
+
+                # Choose disease model
                 if disease_choice == "Diabetes":
                     model = pipe_diab
                 elif disease_choice == "CKD":
@@ -427,14 +524,12 @@ with tab_research:
                 else:
                     model = pipe_cvd
 
-                for i, y_val in enumerate(y_values):
-                    for j, x_val in enumerate(x_values):
-                        row = baseline.copy()
-                        row[x_var] = float(x_val)
-                        row[y_var] = float(y_val)
-                        X_grid = df_from_baseline(row)
-                        risk_grid[i, j] = float(model.predict_proba(X_grid)[0, 1])
+                # Single batched predict_proba call (much faster)
+                probs = model.predict_proba(base_df)[:, 1]
+                risk_grid = probs.reshape(X_grid.shape)
+                max_risk = float(risk_grid.max()) if risk_grid.size > 0 else 1.0
 
+                # Heatmap with z-range from 0 to max risk
                 fig_hm = px.imshow(
                     risk_grid,
                     x=np.round(x_values, 1),
@@ -442,16 +537,17 @@ with tab_research:
                     labels=dict(
                         x=VAR_LABELS.get(x_var, x_var),
                         y=VAR_LABELS.get(y_var, y_var),
-                        color="Predicted risk"
+                        color="Predicted risk",
                     ),
                     origin="lower",
                     aspect="auto",
                     color_continuous_scale="Viridis",
                 )
-                fig_hm.update_coloraxes(cmin=0, cmax=1)
+                fig_hm.update_coloraxes(cmin=0, cmax=max_risk)
                 st.plotly_chart(fig_hm, use_container_width=True)
 
     st.caption(
-        "These researcher tools are intended to help visualize the model's behavior across the predictor space "
-        "for both public health applications and methodological exploration."
+        "These researcher tools help visualize the model's behavior across the predictor space "
+        "for both public health applications (e.g., weight loss or blood pressure reduction scenarios) "
+        "and methodological exploration."
     )
