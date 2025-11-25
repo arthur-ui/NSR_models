@@ -30,6 +30,9 @@ BASE_POVERTY_48 = {
 }
 EXTRA_PER_PERSON_48 = 5500
 
+# IMPORTANT: these maps now match the TRAINING CODEBOOK
+
+# Education (DMDEDUC2-style)
 education_map = {
     "Less than 9th grade": 1,
     "9-11th grade (Includes 12th w/o diploma)": 2,
@@ -39,22 +42,48 @@ education_map = {
 }
 education_inv_map = {v: k for k, v in education_map.items()}
 
+# Gender: 1 = Male, 2 = Female
 gender_map = {"Male": 1, "Female": 2}
-gender_inv_map = {v: k for k, v in gender_map.items()}
+gender_inv_map = {1: "Male", 2: "Female"}
 
+# Race: using RIDRETH3 codes
+# 1 = Mexican American
+# 2 = Other Hispanic
+# 3 = Non-Hispanic White
+# 4 = Non-Hispanic Black
+# 6 = Non-Hispanic Asian
+# 7 = Other / Multi
 race_map = {
-    "Non-Hispanic White": 1,
-    "Non-Hispanic Black": 2,
-    "Hispanic": 3,
-    "Other": 4,
+    "Non-Hispanic White": 3,
+    "Non-Hispanic Black": 4,
+    "Hispanic": 1,  # we treat all Hispanics as code 1 for UI purposes
+    "Other": 7,     # other/multi/Asian get grouped as "Other" for UI purposes
 }
-race_inv_map = {v: k for k, v in race_map.items()}
+def race_code_to_label(code):
+    # Use training-style codes and collapse to 4 labels for display
+    if code == 3:
+        return "Non-Hispanic White"
+    elif code == 4:
+        return "Non-Hispanic Black"
+    elif code in [1, 2]:
+        return "Hispanic"
+    elif code in [6, 7]:
+        return "Other"
+    else:
+        return "Unknown"
 
-smoke_map = {"No": 0, "Yes": 1}
-smoke_inv_map = {v: k for k, v in smoke_map.items()}
+# Smoking: training uses 1/2 (1 = non-smoker, 2 = smoker)
+smoke_map = {"No": 1, "Yes": 2}
+smoke_inv_map = {1: "No", 2: "Yes"}
 
-activity_map = {"Low": 0, "Moderate": 1, "High": 2}
-activity_inv_map = {v: k for k, v in activity_map.items()}
+# Activity level: training has 0,1,2,3; assume 1=Low,2=Moderate,3=High,0=Unknown
+activity_map = {"Low": 1, "Moderate": 2, "High": 3}
+activity_inv_map = {
+    0: "Unknown",
+    1: "Low",
+    2: "Moderate",
+    3: "High",
+}
 
 FEATURE_COLS = [
     "bmi",
@@ -118,65 +147,21 @@ except Exception:
     HAVE_NHANES_SIM = False
 
 if HAVE_NHANES_SIM:
-    # --- 0. Strip whitespace in column names ---
+    # Strip whitespace in column names
     nhanes_sim.columns = nhanes_sim.columns.str.strip()
 
-    # --- 1. Recode Race -> 4-category scheme expected by model ---
-    # Assuming original race codes ~RIDRETH3:
-    # 1 = Mexican American
-    # 2 = Other Hispanic
-    # 3 = Non-Hispanic White
-    # 4 = Non-Hispanic Black
-    # 6 = Non-Hispanic Asian
-    # 7 = Other / Multi
-    if "Race" in nhanes_sim.columns:
-        race_raw = pd.to_numeric(nhanes_sim["Race"], errors="coerce").astype("Int64")
-        race_recode = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-
-        race_recode[race_raw == 3] = 1  # Non-Hispanic White
-        race_recode[race_raw == 4] = 2  # Non-Hispanic Black
-        race_recode[race_raw.isin([1, 2])] = 3  # Hispanic
-        race_recode[race_raw.isin([6, 7, 5])] = 4  # Other / Asian / Multi / other code 5
-
-        nhanes_sim["Race"] = race_recode
-
-    # --- 2. Recode smoking -> 0/1 (No/Yes) ---
-    if "smoking" in nhanes_sim.columns:
-        sm_raw = pd.to_numeric(nhanes_sim["smoking"], errors="coerce").astype("Int64")
-        sm_recode = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-        # 1 = non-smoker, 2 = smoker; 7/9 etc => NaN
-        sm_recode[sm_raw == 1] = 0
-        sm_recode[sm_raw == 2] = 1
-        nhanes_sim["smoking"] = sm_recode
-
-    # --- 3. Clean Education: keep 1–5, everything else NaN ---
-    if "Education" in nhanes_sim.columns:
-        edu_raw = pd.to_numeric(nhanes_sim["Education"], errors="coerce").astype("Int64")
-        edu_clean = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-        edu_clean[edu_raw.isin([1, 2, 3, 4, 5])] = edu_raw[edu_raw.isin([1, 2, 3, 4, 5])]
-        nhanes_sim["Education"] = edu_clean
-
-    # --- 4. Clean Gender: keep 1/2, everything else NaN ---
-    # NHANES RIAGENDR: 1=Male, 2=Female
-    if "Gender" in nhanes_sim.columns:
-        g_raw = pd.to_numeric(nhanes_sim["Gender"], errors="coerce").astype("Int64")
-        g_clean = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-        g_clean[g_raw.isin([1, 2])] = g_raw[g_raw.isin([1, 2])]
-        nhanes_sim["Gender"] = g_clean
-
-    # --- 5. Clean activity_level: keep 0/1/2, everything else NaN ---
-    if "activity_level" in nhanes_sim.columns:
-        act_raw = pd.to_numeric(nhanes_sim["activity_level"], errors="coerce").astype("Int64")
-        act_clean = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-        act_clean[act_raw.isin([0, 1, 2])] = act_raw[act_raw.isin([0, 1, 2])]
-        nhanes_sim["activity_level"] = act_clean
-
-    # --- 6. Force all feature columns to numeric (turn weird strings/missing codes -> NaN) ---
+    # Force all feature cols to numeric (turn weird strings -> NaN)
     for col in FEATURE_COLS:
         if col in nhanes_sim.columns:
             nhanes_sim[col] = pd.to_numeric(nhanes_sim[col], errors="coerce")
 
-    # --- 7. Clip continuous vars to plausible ranges ---
+    # Clean Education: keep 1–5, everything else -> NaN
+    if "Education" in nhanes_sim.columns:
+        edu_raw = nhanes_sim["Education"]
+        edu_clean = edu_raw.where(edu_raw.isin([1, 2, 3, 4, 5]), np.nan)
+        nhanes_sim["Education"] = edu_clean
+
+    # Clip continuous vars to plausible ranges
     clip_ranges = {
         "AgeYears": (18, 90),
         "bmi": (15, 60),
@@ -190,12 +175,12 @@ if HAVE_NHANES_SIM:
         if col in nhanes_sim.columns:
             nhanes_sim[col] = nhanes_sim[col].clip(lo, hi)
 
-    # --- 8. Drop rows missing core predictors entirely ---
+    # Drop rows missing core predictors entirely
     core_cols = [c for c in ["AgeYears", "bmi", "avg_systolic", "avg_diastolic"] if c in nhanes_sim.columns]
     if core_cols:
         nhanes_sim = nhanes_sim.dropna(subset=core_cols)
 
-    # --- 9. Precompute means for imputation ---
+    # Precompute means for imputation
     numeric_for_mean = [
         "bmi",
         "AgeYears",
@@ -225,7 +210,7 @@ def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = np.nan
 
-    # Coerce everything to numeric and impute with fixed NHANES means (or column mean fallback)
+    # Coerce everything to numeric and impute
     for col in FEATURE_COLS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
         mean_val = nhanes_means.get(col, df[col].mean())
@@ -653,7 +638,7 @@ with tab_research:
                 if col not in pop_df.columns:
                     pop_df[col] = np.nan
 
-            # --- jitter continuous predictors (fully robust) ---
+            # jitter continuous predictors
             jitter_frac = jitter_pct / 100.0
             jitter_cols = [
                 "AgeYears",
@@ -668,6 +653,7 @@ with tab_research:
             for col in jitter_cols:
                 if col not in pop_df.columns:
                     continue
+
                 col_numeric = pd.to_numeric(pop_df[col], errors="coerce")
                 mean_val = nhanes_means.get(col, col_numeric.mean())
                 col_numeric = col_numeric.fillna(mean_val).astype(float)
@@ -682,43 +668,23 @@ with tab_research:
 
                 pop_df[col] = col_numeric
 
-            # prepare baseline feature matrix
+            # prepare baseline feature matrix (the actual model inputs)
             base_X = prepare_for_model(pop_df)
-            b_diab, b_ckd, b_cvd = predict_three(base_X)
 
-            # apply numeric deltas and categorical overrides
-            scenario_df = pop_df.copy()
+            # apply numeric deltas and categorical overrides DIRECTLY to base_X
+            scen_X = base_X.copy()
+
             for col_name, delta in numeric_deltas.items():
-                if col_name in scenario_df.columns:
-                    scenario_df[col_name] = scenario_df[col_name] + delta
+                if col_name in scen_X.columns:
+                    scen_X[col_name] = scen_X[col_name] + float(delta)
 
             for col_name, new_val in cat_overrides.items():
-                if col_name in scenario_df.columns:
-                    scenario_df[col_name] = new_val
+                if col_name in scen_X.columns:
+                    scen_X[col_name] = float(new_val)
 
-            scen_X = prepare_for_model(scenario_df)
+            # model predictions
+            b_diab, b_ckd, b_cvd = predict_three(base_X)
             i_diab, i_ckd, i_cvd = predict_three(scen_X)
-
-            # --------- enforce "unchanged individuals unchanged" for cats ---------
-            if cat_overrides:
-                mask_unchanged = np.ones(pop_df.shape[0], dtype=bool)
-                for col_name, new_val in cat_overrides.items():
-                    if col_name in pop_df.columns:
-                        col_series = pd.to_numeric(pop_df[col_name], errors="coerce")
-                        mask_col = (col_series == new_val)
-                        mask_unchanged &= mask_col.fillna(False).to_numpy()
-
-                # for rows that were already in all target categories, force scenario == baseline
-                b_diab = b_diab.copy()
-                b_ckd = b_ckd.copy()
-                b_cvd = b_cvd.copy()
-                i_diab = i_diab.copy()
-                i_ckd = i_ckd.copy()
-                i_cvd = i_cvd.copy()
-
-                i_diab[mask_unchanged] = b_diab[mask_unchanged]
-                i_ckd[mask_unchanged] = b_ckd[mask_unchanged]
-                i_cvd[mask_unchanged] = b_cvd[mask_unchanged]
 
             # ---------- overall summary ----------
             overall = pd.DataFrame({
@@ -774,7 +740,7 @@ with tab_research:
             # ---------- subgroup summary ----------
             st.markdown(f"**Subgroup effects by {strat_option}**")
 
-            # build subgroup labels (based on BASELINE pop_df)
+            # build subgroup labels from *baseline* pop_df
             if strat_option == "AgeYears (binned)":
                 if "AgeYears" in pop_df.columns:
                     subgroup_series = pd.cut(
@@ -795,16 +761,14 @@ with tab_research:
                     subgroup_series = pd.Series(["All"] * pop_df.shape[0])
             else:
                 col_name = strat_option
-                if strat_option in ["Gender", "Race", "Education", "smoking", "activity_level"]:
-                    col_name = strat_option
                 if col_name not in pop_df.columns:
                     subgroup_series = pd.Series(["All"] * pop_df.shape[0])
                 else:
-                    codes = pd.to_numeric(pop_df[col_name], errors="coerce")
+                    codes = pop_df[col_name]
                     if col_name == "Gender":
                         subgroup_series = codes.map(gender_inv_map).fillna("Unknown")
                     elif col_name == "Race":
-                        subgroup_series = codes.map(race_inv_map).fillna("Unknown")
+                        subgroup_series = codes.map(race_code_to_label).fillna("Unknown")
                     elif col_name == "Education":
                         subgroup_series = codes.map(education_inv_map).fillna("Unknown")
                     elif col_name == "smoking":
