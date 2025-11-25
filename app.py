@@ -588,6 +588,17 @@ with tab_research:
                 "avg_HR",
                 "FamIncome_to_poverty_ratio",
             ]
+            # Force jitter columns to numeric safely
+            for col in jitter_cols:
+                if col in pop_df.columns:
+                    pop_df[col] = pd.to_numeric(pop_df[col], errors="coerce")
+            
+            # Fill NaN with NHANES means for jitter columns
+            for col in jitter_cols:
+                if col in pop_df.columns:
+                    mean_val = nhanes_means.get(col, pop_df[col].mean())
+                    pop_df[col] = pop_df[col].fillna(mean_val)
+
             for col in jitter_cols:
                 if col in pop_df.columns:
                     factor = rng.uniform(1.0 - jitter_frac, 1.0 + jitter_frac, size=pop_df.shape[0])
