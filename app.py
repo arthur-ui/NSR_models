@@ -207,46 +207,7 @@ if HAVE_NHANES_SIM:
 else:
     nhanes_means = pd.Series(dtype=float)
 
-    # 2) Clip continuous vars to plausible ranges to avoid crazy values
-    clip_ranges = {
-        "AgeYears": (18, 90),
-        "bmi": (15, 60),
-        "waist_circumference": (50, 200),
-        "avg_systolic": (80, 220),
-        "avg_diastolic": (40, 140),
-        "avg_HR": (40, 140),
-        "FamIncome_to_poverty_ratio": (0.05, 10.0),
-    }
-    for col, (lo, hi) in clip_ranges.items():
-        if col in nhanes_sim.columns:
-            nhanes_sim[col] = nhanes_sim[col].clip(lo, hi)
-
-    # 3) Drop rows missing *core* predictors entirely (these are garbage)
-    core_cols = [c for c in ["AgeYears", "bmi", "avg_systolic", "avg_diastolic"] if c in nhanes_sim.columns]
-    if core_cols:
-        nhanes_sim = nhanes_sim.dropna(subset=core_cols)
-
-    # 4) Precompute means for imputation on the columns we care about
-    numeric_for_mean = [
-        "bmi",
-        "AgeYears",
-        "waist_circumference",
-        "avg_systolic",
-        "avg_diastolic",
-        "avg_HR",
-        "FamIncome_to_poverty_ratio",
-        "activity_level",
-        "smoking",
-        "Education",
-        "Race",
-        "Gender",
-    ]
-    existing_cols = [c for c in numeric_for_mean if c in nhanes_sim.columns]
-    nhanes_means = nhanes_sim[existing_cols].mean(numeric_only=True)
-else:
-    nhanes_means = pd.Series(dtype=float)
-
-
+   
 
 def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure the dataframe has all feature columns and impute missing numeric values."""
