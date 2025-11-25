@@ -75,6 +75,14 @@ FEATURE_COLS = [
 # IMPORTANT: these are treated as categorical inside the training pipeline
 forced_cats = {"Gender", "Race", "Education", "smoking"}
 
+# disease ↔ columns mapping for subgroup plotting
+DISEASE_LABELS = ["Diabetes", "CKD", "CVD"]
+DISEASE_TO_COLS = {
+    "Diabetes": ("b_diab", "i_diab"),
+    "CKD": ("b_ckd", "i_ckd"),
+    "CVD": ("b_cvd", "i_cvd"),
+}
+
 
 def compute_poverty_threshold(household_size: int) -> int:
     if household_size <= 8:
@@ -109,6 +117,36 @@ def predict_three(X: pd.DataFrame):
     p_ckd = pipe_ckd.predict_proba(X)[:, 1]
     p_cvd = pipe_cvd.predict_proba(X)[:, 1]
     return p_diab, p_ckd, p_cvd
+
+
+def bootstrap_rel_change(b_vals, i_vals, B=300, rng=None):
+    """
+    Bootstrap 95% CI for *relative* (%) change in mean risk:
+    100 * (mean_scenario - mean_baseline) / mean_baseline
+    """
+    b_vals = np.asarray(b_vals, float)
+    i_vals = np.asarray(i_vals, float)
+
+    mask = np.isfinite(b_vals) & np.isfinite(i_vals)
+    b_vals = b_vals[mask]
+    i_vals = i_vals[mask]
+    n = len(b_vals)
+    if n == 0:
+        return np.nan, np.nan
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    idx = rng.integers(0, n, size=(B, n))
+    b_means = b_vals[idx].mean(axis=1)
+    i_means = i_vals[idx].mean(axis=1)
+    rel_changes = np.where(
+        b_means > 0,
+        100.0 * (i_means - b_means) / b_means,
+        np.nan
+    )
+    lo, hi = np.nanpercentile(rel_changes, [2.5, 97.5])
+    return float(lo), float(hi)
 
 
 # -------------------------------------------------
@@ -200,7 +238,8 @@ def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
 
     Categorical predictors (Gender, Race, Education, smoking) are left
     as their NHANES integer codes with NaNs; the model pipeline will
-    impute their modes internally.
+    impute their modes internally (SimpleImputer(strategy="most_frequent")
+    inside the joblib).
     """
     df = df.copy()
 
@@ -530,8 +569,8 @@ with tab_research:
         margin=dict(l=40, r=40, t=40, b=40),
     )
     for c in [1, 2, 3]:
-        fig_heat.update_xaxes(title_text=heat_x_label if c==2 else "", row=1, col=c)
-    fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=1)
+        fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=c)
+        fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=c)
 
     st.plotly_chart(fig_heat, use_container_width=True)
     st.caption(
@@ -542,9 +581,6 @@ with tab_research:
     st.markdown("---")
 
     # ============================================================
-    # 3. Population scenario simulator (multi-variable)
-    # ============================================================
-        # ============================================================
     # 3. Population scenario simulator (multi-variable)
     # ============================================================
     st.subheader("Population scenario simulator")
@@ -633,13 +669,7 @@ with tab_research:
             index=0
         )
 
-        run_clicked = st.button("Run population scenario", key="run_sim")
-
-        # --------------------------------------------------------
-        # Run simulation only when the button is clicked
-        # Store results in session_state so plots persist
-        # --------------------------------------------------------
-        if run_clicked:
+        if st.button("Run population scenario", key="run_sim"):
             # --- draw sample of real NHANES rows ---
             available_idx = nhanes_sim.index
             sampled_idx = rng.choice(available_idx, size=pop_n, replace=True)
@@ -717,8 +747,63 @@ with tab_research:
                 np.nan
             )
 
-            # ---------- subgroup contributions (decomposition) ----------
-            # Build subgroup labels from raw pop_df (baseline structure)
+            # Bootstrap 95% CIs for relative change (%)
+            ci_diab = bootstrap_rel_change(b_diab, i_diab, B=300, rng=rng)
+            ci_ckd = bootstrap_rel_change(b_ckd, i_ckd, B=300, rng=rng)
+            ci_cvd = bootstrap_rel_change(b_cvd, i_cvd, B=300, rng=rng)
+            overall["CI_low_%"] = [ci_diab[0], ci_ckd[0], ci_cvd[0]]
+            overall["CI_high_%"] = [ci_diab[1], ci_ckd[1], ci_cvd[1]]
+
+            st.markdown("**Overall average predicted risk (baseline vs scenario)**")
+            st.dataframe(
+                overall.style.format({
+                    "Baseline_mean": "{:.5f}",
+                    "Scenario_mean": "{:.5f}",
+                    "Absolute_change": "{:.5f}",
+                    "Relative_change_%": "{:.2f}",
+                    "CI_low_%": "{:.2f}",
+                    "CI_high_%": "{:.2f}",
+                }),
+                use_container_width=True
+            )
+
+            # ---------- % change bar chart with CIs ----------
+            fig_change = go.Figure()
+            rel_vals = overall["Relative_change_%"].values.astype(float)
+            err_plus = (overall["CI_high_%"] - overall["Relative_change_%"]).values.astype(float)
+            err_minus = (overall["Relative_change_%"] - overall["CI_low_%"]).values.astype(float)
+
+            fig_change.add_trace(
+                go.Bar(
+                    x=overall["Disease"],
+                    y=rel_vals,
+                    error_y=dict(
+                        type="data",
+                        array=err_plus,
+                        arrayminus=err_minus,
+                        visible=True,
+                    ),
+                )
+            )
+            fig_change.update_layout(
+                yaxis_title="Relative change in mean risk (%)",
+                xaxis_title="Disease",
+                margin=dict(l=40, r=40, t=40, b=40),
+                shapes=[
+                    dict(
+                        type="line",
+                        x0=-0.5, x1=2.5,
+                        y0=0, y1=0,
+                        line=dict(color="grey", dash="dash")
+                    )
+                ]
+            )
+            st.plotly_chart(fig_change, use_container_width=True)
+
+            # ---------- subgroup summary ----------
+            st.markdown(f"**Subgroup data prepared for stratification by {strat_option}**")
+
+            # build subgroup labels from *baseline* raw codes in pop_df
             if strat_option == "AgeYears (binned)":
                 if "AgeYears" in pop_df.columns:
                     subgroup_series = pd.cut(
@@ -766,123 +851,85 @@ with tab_research:
                 "i_cvd": i_cvd,
             })
 
-            grp = df_sub.groupby("Subgroup")
-            contrib_rows = []
-            N = len(df_sub)
+            # stash for later plotting without re-running simulation
+            st.session_state["df_sub"] = df_sub
+            st.session_state["strat_option"] = strat_option
 
-            for subgroup, g in grp:
-                n_g = len(g)
-                if n_g == 0:
-                    continue
-                weight = n_g / N
-
-                bd = g["b_diab"].mean()
-                id_ = g["i_diab"].mean()
-                bc = g["b_ckd"].mean()
-                ic = g["i_ckd"].mean()
-                bv = g["b_cvd"].mean()
-                iv = g["i_cvd"].mean()
-
-                contrib_rows.append({
-                    "Subgroup": subgroup,
-                    "Disease": "Diabetes",
-                    "Contribution": (id_ - bd) * weight
-                })
-                contrib_rows.append({
-                    "Subgroup": subgroup,
-                    "Disease": "CKD",
-                    "Contribution": (ic - bc) * weight
-                })
-                contrib_rows.append({
-                    "Subgroup": subgroup,
-                    "Disease": "CVD",
-                    "Contribution": (iv - bv) * weight
-                })
-
-            contrib_df = pd.DataFrame(contrib_rows)
-
-            # Store results so plots persist on rerun
-            st.session_state["sim_overall"] = overall
-            st.session_state["sim_contrib_df"] = contrib_df
-            st.session_state["sim_strat_option"] = strat_option
-
-        # --------------------------------------------------------
-        # Render results from the last run (if available)
-        # --------------------------------------------------------
-        if "sim_overall" in st.session_state:
-            overall = st.session_state["sim_overall"]
-
-            st.markdown("**Overall average predicted risk (baseline vs scenario)**")
-            st.dataframe(
-                overall.style.format({
-                    "Baseline_mean": "{:.5f}",
-                    "Scenario_mean": "{:.5f}",
-                    "Absolute_change": "{:.5f}",
-                    "Relative_change_%": "{:.2f}",
-                }),
-                use_container_width=True
+            st.caption(
+                "Bars above show overall relative (%) change in mean modelled risk. "
+                "Use the controls below to examine how different subgroups contribute to these changes."
             )
 
-            fig_change = go.Figure()
-            fig_change.add_trace(
-                go.Bar(
-                    x=overall["Disease"],
-                    y=overall["Relative_change_%"],
-                )
-            )
-            fig_change.update_layout(
-                yaxis_title="Relative change in mean risk (%)",
-                xaxis_title="Disease",
-                margin=dict(l=40, r=40, t=40, b=40),
-                shapes=[
-                    dict(
-                        type="line",
-                        x0=-0.5, x1=2.5,
-                        y0=0, y1=0,
-                        line=dict(color="grey", dash="dash")
-                    )
-                ]
-            )
-            st.plotly_chart(fig_change, use_container_width=True)
+        # ------------- Subgroup contributions plot (relative % + CIs) -------------
+        if "df_sub" in st.session_state:
+            df_sub = st.session_state["df_sub"]
+            strat_label = st.session_state["strat_option"]
 
-        if "sim_contrib_df" in st.session_state:
-            contrib_df = st.session_state["sim_contrib_df"]
-            used_strat = st.session_state.get("sim_strat_option", strat_option)
-
-            st.markdown(f"**Subgroup contributions to overall change – grouped by {used_strat}**")
+            st.markdown(f"**Subgroup contributions to overall change – grouped by {strat_label}**")
 
             disease_choice = st.selectbox(
                 "Disease to visualize by subgroup",
-                ["Diabetes", "CKD", "CVD"],
-                index=0,
-                key="disease_strat"
+                DISEASE_LABELS,
+                key="subgroup_disease_choice"
             )
 
-            plot_df = contrib_df[contrib_df["Disease"] == disease_choice].copy()
-            plot_df["Subgroup"] = plot_df["Subgroup"].astype(str)
-            plot_df = plot_df.sort_values("Subgroup")
+            b_col, i_col = DISEASE_TO_COLS[disease_choice]
+
+            rows = []
+            rng_local = np.random.default_rng(seed + 12345)
+            for subgroup_name, sub_group_df in df_sub.groupby("Subgroup"):
+                b_vals = sub_group_df[b_col].values
+                i_vals = sub_group_df[i_col].values
+
+                base_mean = np.nanmean(b_vals)
+                scen_mean = np.nanmean(i_vals)
+                if base_mean > 0:
+                    rel_change = 100.0 * (scen_mean - base_mean) / base_mean
+                else:
+                    rel_change = np.nan
+
+                ci_low, ci_high = bootstrap_rel_change(
+                    b_vals, i_vals, B=300, rng=rng_local
+                )
+
+                rows.append({
+                    "Subgroup": str(subgroup_name),
+                    "Rel_change_%": rel_change,
+                    "CI_low_%": ci_low,
+                    "CI_high_%": ci_high,
+                })
+
+            sub_df = pd.DataFrame(rows).sort_values("Subgroup")
 
             fig_sub = go.Figure()
+            rel_vals = sub_df["Rel_change_%"].values.astype(float)
+            err_plus = (sub_df["CI_high_%"] - sub_df["Rel_change_%"]).values.astype(float)
+            err_minus = (sub_df["Rel_change_%"] - sub_df["CI_low_%"]).values.astype(float)
+
             fig_sub.add_trace(
                 go.Bar(
-                    x=plot_df["Subgroup"],
-                    y=plot_df["Contribution"],
+                    x=sub_df["Subgroup"],
+                    y=rel_vals,
+                    error_y=dict(
+                        type="data",
+                        array=err_plus,
+                        arrayminus=err_minus,
+                        visible=True,
+                    ),
                 )
             )
 
             fig_sub.update_layout(
-                barmode="group",  # side-by-side style (single series)
-                xaxis_title=f"{used_strat} subgroup",
-                yaxis_title="Absolute change in mean risk\n(population-share-weighted)",
+                barmode="group",
+                xaxis_title=f"{strat_label} subgroup",
+                yaxis_title=f"Relative change in mean risk for {disease_choice} (%)",
                 margin=dict(l=40, r=40, t=80, b=80),
             )
 
             st.plotly_chart(fig_sub, use_container_width=True)
 
             st.caption(
-                "Bars show how each subgroup contributes to the overall change in mean modelled "
-                f"risk for {disease_choice}. The sum of the bar heights equals the overall "
-                "absolute change for that disease shown in the table above."
+                f"Bars show how each subgroup contributes to the overall relative (%) change "
+                f"in mean modelled risk for {disease_choice}. The sum of the subgroup effects "
+                f(is) "consistent with the overall relative change shown above (up to sampling error)."
             )
-
-
