@@ -578,6 +578,7 @@ with tab_research:
                     pop_df[col] = np.nan
 
             # jitter continuous predictors
+                        # jitter continuous predictors (fully robust)
             jitter_frac = jitter_pct / 100.0
             jitter_cols = [
                 "AgeYears",
@@ -588,21 +589,30 @@ with tab_research:
                 "avg_HR",
                 "FamIncome_to_poverty_ratio",
             ]
-            # Force jitter columns to numeric safely
-            for col in jitter_cols:
-                if col in pop_df.columns:
-                    pop_df[col] = pd.to_numeric(pop_df[col], errors="coerce")
-            
-            # Fill NaN with NHANES means for jitter columns
-            for col in jitter_cols:
-                if col in pop_df.columns:
-                    mean_val = nhanes_means.get(col, pop_df[col].mean())
-                    pop_df[col] = pop_df[col].fillna(mean_val)
 
             for col in jitter_cols:
-                if col in pop_df.columns:
-                    factor = rng.uniform(1.0 - jitter_frac, 1.0 + jitter_frac, size=pop_df.shape[0])
-                    pop_df[col] = pop_df[col] * factor
+                if col not in pop_df.columns:
+                    continue
+
+                # 1) Coerce to numeric
+                col_numeric = pd.to_numeric(pop_df[col], errors="coerce")
+
+                # 2) Impute NaNs with NHANES population mean (or column mean as fallback)
+                mean_val = nhanes_means.get(col, col_numeric.mean())
+                col_numeric = col_numeric.fillna(mean_val).astype(float)
+
+                # 3) Apply multiplicative jitter
+                if jitter_frac > 0:
+                    factor = rng.uniform(
+                        1.0 - jitter_frac,
+                        1.0 + jitter_frac,
+                        size=col_numeric.shape[0],
+                    )
+                    col_numeric = col_numeric * factor
+
+                # 4) Write back as pure float column
+                pop_df[col] = col_numeric
+
 
             # prepare baseline feature matrix
             base_X = prepare_for_model(pop_df)
