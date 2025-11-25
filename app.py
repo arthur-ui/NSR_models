@@ -743,120 +743,128 @@ with tab_research:
             st.plotly_chart(fig_change, use_container_width=True)
 
             # ---------- subgroup summary ----------
-st.markdown(f"**Subgroup contributions to overall change – grouped by {strat_option}**")
+            # ---------- subgroup contributions (decomposition) ----------
+            st.markdown(f"**Subgroup contributions to overall change – grouped by {strat_option}**")
 
-# Build subgroup labels from raw pop_df (baseline structure)
-if strat_option == "AgeYears (binned)":
-    if "AgeYears" in pop_df.columns:
-        subgroup_series = pd.cut(
-            pop_df["AgeYears"],
-            bins=[0, 40, 60, 200],
-            labels=["<40", "40–59", "≥60"]
-        )
-    else:
-        subgroup_series = pd.Series(["All"] * pop_df.shape[0])
-elif strat_option == "bmi (binned)":
-    if "bmi" in pop_df.columns:
-        subgroup_series = pd.cut(
-            pop_df["bmi"],
-            bins=[0, 25, 30, 100],
-            labels=["<25", "25–29.9", "≥30"]
-        )
-    else:
-        subgroup_series = pd.Series(["All"] * pop_df.shape[0])
-else:
-    col_name = strat_option
-    if col_name not in pop_df.columns:
-        subgroup_series = pd.Series(["All"] * pop_df.shape[0])
-    else:
-        codes = pop_df[col_name]
-        if col_name == "Gender":
-            subgroup_series = codes.map(gender_inv_map).fillna("Unknown")
-        elif col_name == "Race":
-            subgroup_series = codes.map(race_inv_map).fillna("Unknown")
-        elif col_name == "Education":
-            subgroup_series = codes.map(education_inv_map).fillna("Unknown")
-        elif col_name == "smoking":
-            subgroup_series = codes.map(smoke_inv_map).fillna("Unknown")
-        elif col_name == "activity_level":
-            subgroup_series = codes.map(activity_inv_map).fillna("Unknown")
-        else:
-            subgroup_series = codes.astype(str)
+            # Build subgroup labels from raw pop_df (baseline structure)
+            if strat_option == "AgeYears (binned)":
+                if "AgeYears" in pop_df.columns:
+                    subgroup_series = pd.cut(
+                        pop_df["AgeYears"],
+                        bins=[0, 40, 60, 200],
+                        labels=["<40", "40–59", "≥60"]
+                    )
+                else:
+                    subgroup_series = pd.Series(["All"] * pop_df.shape[0])
+            elif strat_option == "bmi (binned)":
+                if "bmi" in pop_df.columns:
+                    subgroup_series = pd.cut(
+                        pop_df["bmi"],
+                        bins=[0, 25, 30, 100],
+                        labels=["<25", "25–29.9", "≥30"]
+                    )
+                else:
+                    subgroup_series = pd.Series(["All"] * pop_df.shape[0])
+            else:
+                col_name = strat_option
+                if col_name not in pop_df.columns:
+                    subgroup_series = pd.Series(["All"] * pop_df.shape[0])
+                else:
+                    codes = pop_df[col_name]
+                    if col_name == "Gender":
+                        subgroup_series = codes.map(gender_inv_map).fillna("Unknown")
+                    elif col_name == "Race":
+                        subgroup_series = codes.map(race_inv_map).fillna("Unknown")
+                    elif col_name == "Education":
+                        subgroup_series = codes.map(education_inv_map).fillna("Unknown")
+                    elif col_name == "smoking":
+                        subgroup_series = codes.map(smoke_inv_map).fillna("Unknown")
+                    elif col_name == "activity_level":
+                        subgroup_series = codes.map(activity_inv_map).fillna("Unknown")
+                    else:
+                        subgroup_series = codes.astype(str)
 
-df_sub = pd.DataFrame({
-    "Subgroup": subgroup_series,
-    "b_diab": b_diab,
-    "b_ckd": b_ckd,
-    "b_cvd": b_cvd,
-    "i_diab": i_diab,
-    "i_ckd": i_ckd,
-    "i_cvd": i_cvd,
-})
+            # Combine predictions + subgroup labels
+            df_sub = pd.DataFrame({
+                "Subgroup": subgroup_series,
+                "b_diab": b_diab,
+                "b_ckd": b_ckd,
+                "b_cvd": b_cvd,
+                "i_diab": i_diab,
+                "i_ckd": i_ckd,
+                "i_cvd": i_cvd,
+            })
 
-# Compute subgroup-level contributions
-grp = df_sub.groupby("Subgroup")
-contrib = []
+            # Compute population-share–weighted contributions
+            grp = df_sub.groupby("Subgroup")
+            contrib_rows = []
+            N = len(df_sub)
 
-N = len(df_sub)
+            for subgroup, g in grp:
+                n_g = len(g)
+                if n_g == 0:
+                    continue
+                weight = n_g / N
 
-for subgroup, g in grp:
-    n_g = len(g)
-    weight = n_g / N
+                bd = g["b_diab"].mean()
+                id_ = g["i_diab"].mean()
+                bc = g["b_ckd"].mean()
+                ic = g["i_ckd"].mean()
+                bv = g["b_cvd"].mean()
+                iv = g["i_cvd"].mean()
 
-    bd = g["b_diab"].mean()
-    id_ = g["i_diab"].mean()
-    bc = g["b_ckd"].mean()
-    ic = g["i_ckd"].mean()
-    bv = g["b_cvd"].mean()
-    iv = g["i_cvd"].mean()
+                contrib_rows.append({
+                    "Subgroup": subgroup,
+                    "Disease": "Diabetes",
+                    "Contribution": (id_ - bd) * weight
+                })
+                contrib_rows.append({
+                    "Subgroup": subgroup,
+                    "Disease": "CKD",
+                    "Contribution": (ic - bc) * weight
+                })
+                contrib_rows.append({
+                    "Subgroup": subgroup,
+                    "Disease": "CVD",
+                    "Contribution": (iv - bv) * weight
+                })
 
-    contrib.append({
-        "Subgroup": subgroup,
-        "Disease": "Diabetes",
-        "Contribution": (id_ - bd) * weight
-    })
-    contrib.append({
-        "Subgroup": subgroup,
-        "Disease": "CKD",
-        "Contribution": (ic - bc) * weight
-    })
-    contrib.append({
-        "Subgroup": subgroup,
-        "Disease": "CVD",
-        "Contribution": (iv - bv) * weight
-    })
+            contrib_df = pd.DataFrame(contrib_rows)
 
-contrib_df = pd.DataFrame(contrib)
+            # ---- Disease toggle + side-by-side bars ----
+            disease_choice = st.selectbox(
+                "Disease to visualize by subgroup",
+                ["Diabetes", "CKD", "CVD"],
+                index=0,
+                key="disease_strat"
+            )
 
-# Plot stacked bar chart
-fig_stack = go.Figure()
+            plot_df = contrib_df[contrib_df["Disease"] == disease_choice].copy()
+            plot_df["Subgroup"] = plot_df["Subgroup"].astype(str)
+            plot_df = plot_df.sort_values("Subgroup")
 
-subgroups = contrib_df["Subgroup"].unique()
-for subgroup in subgroups:
-    mask = contrib_df["Subgroup"] == subgroup
-    fig_stack.add_trace(
-        go.Bar(
-            x=contrib_df.loc[mask, "Disease"],
-            y=contrib_df.loc[mask, "Contribution"],
-            name=str(subgroup)
-        )
-    )
+            fig_sub = go.Figure()
+            fig_sub.add_trace(
+                go.Bar(
+                    x=plot_df["Subgroup"],
+                    y=plot_df["Contribution"],
+                )
+            )
 
-fig_stack.update_layout(
-    barmode="stack",
-    xaxis_title="Disease",
-    yaxis_title="Absolute change in mean risk (stacked contributions)",
-    margin=dict(l=40, r=40, t=80, b=80),
-    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
-)
+            fig_sub.update_layout(
+                barmode="group",  # side-by-side style (even though single series)
+                xaxis_title=f"{strat_option} subgroup",
+                yaxis_title="Absolute change in mean risk\n(population-share-weighted)",
+                margin=dict(l=40, r=40, t=80, b=80),
+            )
 
-st.plotly_chart(fig_stack, use_container_width=True)
+            st.plotly_chart(fig_sub, use_container_width=True)
 
-st.caption(
-    "Each bar shows how subgroups (stacked colors) contribute to the overall change "
-    "in mean modelled risk. For each disease, the total stack height equals the overall "
-    "absolute change shown above."
-)
+            st.caption(
+                "Bars show how each subgroup contributes to the overall change in mean modelled "
+                f"risk for {disease_choice}. The sum of the bar heights equals the overall "
+                "absolute change for that disease shown in the table above."
+            )
 
 
 
