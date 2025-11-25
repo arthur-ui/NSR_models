@@ -568,9 +568,14 @@ with tab_research:
         coloraxis=dict(colorscale="Viridis", cmin=0.0, cmax=max_risk),
         margin=dict(l=40, r=40, t=40, b=40),
     )
-    for c in [1, 2, 3]:
-        fig_heat.update_xaxes(title_text=heat_x_label if c == 2 else "", row=1, col=c)
+
+    #titles axes on only one panel
+    fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=2)
     fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=1)
+
+    for c in [2, 3]:
+        fig_heat.update_yaxes(showticklabels=False, row=1, col=c)
+
 
     st.plotly_chart(fig_heat, use_container_width=True)
     st.caption(
