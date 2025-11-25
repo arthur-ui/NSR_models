@@ -50,7 +50,7 @@ race_map = {
 }
 race_inv_map = {v: k for k, v in race_map.items()}
 
-# NOTE: model was trained with numeric “smoking” but we’ll use 0/1 here
+# NOTE: model was trained with categorical “smoking”; here we use 0/1
 smoke_map = {"No": 0, "Yes": 1}
 smoke_inv_map = {v: k for k, v in smoke_map.items()}
 
@@ -72,8 +72,18 @@ FEATURE_COLS = [
     "Gender",
 ]
 
-CATEGORICAL_COLS = ["activity_level", "smoking", "Education", "Race", "Gender"]
-NUMERIC_COLS = [c for c in FEATURE_COLS if c not in CATEGORICAL_COLS]
+NUMERIC_COLS = [
+    "bmi",
+    "AgeYears",
+    "waist_circumference",
+    "activity_level",  # treated as numeric in training
+    "avg_systolic",
+    "avg_diastolic",
+    "avg_HR",
+    "FamIncome_to_poverty_ratio",
+]
+
+CATEGORICAL_COLS = ["Education", "Race", "Gender", "smoking"]
 
 
 def compute_poverty_threshold(household_size: int) -> int:
@@ -127,7 +137,7 @@ if HAVE_NHANES_SIM:
 
     # ---------- recode / clean categorical variables ----------
 
-    # Race (RIDRETH3 -> 4-category scheme)
+    # Race (RIDRETH3-like -> 4-category scheme)
     # 1 = Mexican American
     # 2 = Other Hispanic
     # 3 = Non-Hispanic White
@@ -145,11 +155,11 @@ if HAVE_NHANES_SIM:
 
         nhanes_sim["Race"] = race_recode
 
-    # Smoking: your NHANES file had 1/2/99 codes; standardize to 0/1 here.
+    # Smoking: standardize to 0/1 if present
     if "smoking" in nhanes_sim.columns:
         sm_raw = pd.to_numeric(nhanes_sim["smoking"], errors="coerce").astype("Int64")
         sm_clean = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-        # assume 1 = non-smoker, 2 = smoker, 7/9/99 = missing
+        # assume 1 = non-smoker, 2 = smoker; 0 and others -> NaN
         sm_clean[sm_raw == 1] = 0
         sm_clean[sm_raw == 2] = 1
         nhanes_sim["smoking"] = sm_clean
@@ -161,8 +171,8 @@ if HAVE_NHANES_SIM:
         edu_clean[edu_raw.isin([1, 2, 3, 4, 5])] = edu_raw[edu_raw.isin([1, 2, 3, 4, 5])]
         nhanes_sim["Education"] = edu_clean
 
-    # Force all feature cols to numeric (strings/blanks -> NaN)
-    for col in FEATURE_COLS:
+    # Force numeric for numeric-like cols only
+    for col in NUMERIC_COLS:
         if col in nhanes_sim.columns:
             nhanes_sim[col] = pd.to_numeric(nhanes_sim[col], errors="coerce")
 
@@ -185,31 +195,19 @@ if HAVE_NHANES_SIM:
     if core_cols:
         nhanes_sim = nhanes_sim.dropna(subset=core_cols)
 
-    # -------- precompute means (numeric) and modes (categorical) for imputation --------
-    existing_num = [c for c in NUMERIC_COLS if c in nhanes_sim.columns]
-    existing_cat = [c for c in CATEGORICAL_COLS if c in nhanes_sim.columns]
-
-    if existing_num:
-        nhanes_means_num = nhanes_sim[existing_num].mean(numeric_only=True)
-    else:
-        nhanes_means_num = pd.Series(dtype=float)
-
-    if existing_cat:
-        # mode() returns DataFrame; take first row
-        nhanes_modes_cat = nhanes_sim[existing_cat].mode(dropna=True).iloc[0]
-    else:
-        nhanes_modes_cat = pd.Series(dtype=float)
+    # Precompute means for numeric imputation only
+    numeric_for_mean = [c for c in NUMERIC_COLS if c in nhanes_sim.columns]
+    nhanes_means = nhanes_sim[numeric_for_mean].mean(numeric_only=True)
 else:
-    nhanes_means_num = pd.Series(dtype=float)
-    nhanes_modes_cat = pd.Series(dtype=float)
+    nhanes_means = pd.Series(dtype=float)
 
 
 def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Ensure the dataframe has all feature columns, coerce to numeric, and
-    impute missing values:
-      - NUMERIC_COLS: mean
-      - CATEGORICAL_COLS: mode (most frequent code)
+    Ensure the dataframe has all feature columns, coerce NUMERIC_COLS to numeric and
+    impute missing numeric values with NHANES means (or column mean fallback).
+    CATEGORICAL_COLS are passed through raw (with NaNs) so the model pipeline
+    can impute with most_frequent and one-hot encode, exactly as in training.
     """
     df = df.copy()
 
@@ -218,26 +216,18 @@ def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = np.nan
 
-    # Numeric columns: mean imputation
+    # Numeric columns: coerce + impute
     for col in NUMERIC_COLS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-        mean_val = nhanes_means_num.get(col, df[col].mean())
+        mean_val = nhanes_means.get(col, df[col].mean())
         df[col] = df[col].fillna(mean_val)
 
-    # Categorical columns: mode imputation
-    for col in CATEGORICAL_COLS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-        if col in nhanes_modes_cat and pd.notna(nhanes_modes_cat[col]):
-            fill_val = nhanes_modes_cat[col]
-        else:
-            # fallback: mode of this df column, or 0 if completely empty
-            if df[col].notna().any():
-                fill_val = df[col].mode(dropna=True).iloc[0]
-            else:
-                fill_val = 0.0
-        df[col] = df[col].fillna(fill_val)
+    # Categorical columns: DO NOT impute here; just leave values/NaNs as-is
+    # (the joblib pipeline handles cat imputation & encoding)
+    # We only ensure they exist; types can be int/float/object, all fine for OHE.
 
-    return df[FEATURE_COLS].astype(float).copy()
+    # Keep columns in the exact order expected by the model
+    return df[FEATURE_COLS].copy()
 
 
 # ===========================
@@ -627,7 +617,7 @@ with tab_research:
                 list(mapping.keys()),
                 key=f"override_{col_name}"
             )
-            cat_overrides[col_name] = float(mapping[new_label])
+            cat_overrides[col_name] = mapping[new_label]
 
         # ----- stratification options -----
         st.markdown("**Stratify results by**")
@@ -651,9 +641,6 @@ with tab_research:
             sampled_idx = rng.choice(available_idx, size=pop_n, replace=True)
             pop_df = nhanes_sim.loc[sampled_idx].copy()
 
-            # CRUCIAL: reset index so predictions align with subgroup labels
-            pop_df = pop_df.reset_index(drop=True)
-
             # ensure required columns exist
             for col in FEATURE_COLS:
                 if col not in pop_df.columns:
@@ -676,7 +663,7 @@ with tab_research:
                     continue
 
                 col_numeric = pd.to_numeric(pop_df[col], errors="coerce")
-                mean_val = nhanes_means_num.get(col, col_numeric.mean())
+                mean_val = nhanes_means.get(col, col_numeric.mean())
                 col_numeric = col_numeric.fillna(mean_val).astype(float)
 
                 if jitter_frac > 0:
@@ -689,23 +676,24 @@ with tab_research:
 
                 pop_df[col] = col_numeric
 
-            # ----- build baseline feature matrix -----
+            # ----- build baseline feature matrix from raw pop_df -----
             base_X = prepare_for_model(pop_df)
             b_diab, b_ckd, b_cvd = predict_three(base_X)
 
-            # ----- build scenario feature matrix from base_X -----
-            scen_X = base_X.copy()
+            # ----- build scenario dataframe from raw pop_df -----
+            scenario_df = pop_df.copy()
 
             # numeric deltas
             for col_name, delta in numeric_deltas.items():
-                if col_name in scen_X.columns:
-                    scen_X[col_name] = scen_X[col_name] + delta
+                if col_name in scenario_df.columns:
+                    scenario_df[col_name] = scenario_df[col_name] + delta
 
             # categorical overrides
             for col_name, new_val in cat_overrides.items():
-                if col_name in scen_X.columns:
-                    scen_X[col_name] = new_val
+                if col_name in scenario_df.columns:
+                    scenario_df[col_name] = new_val
 
+            scen_X = prepare_for_model(scenario_df)
             i_diab, i_ckd, i_cvd = predict_three(scen_X)
 
             # ---------- overall summary ----------
@@ -762,7 +750,7 @@ with tab_research:
             # ---------- subgroup summary ----------
             st.markdown(f"**Subgroup effects by {strat_option}**")
 
-            # build subgroup labels from *baseline* raw codes
+            # build subgroup labels from *baseline* raw codes in pop_df
             if strat_option == "AgeYears (binned)":
                 if "AgeYears" in pop_df.columns:
                     subgroup_series = pd.cut(
@@ -786,7 +774,7 @@ with tab_research:
                 if col_name not in pop_df.columns:
                     subgroup_series = pd.Series(["All"] * pop_df.shape[0])
                 else:
-                    codes = pd.to_numeric(pop_df[col_name], errors="coerce")
+                    codes = pop_df[col_name]
                     if col_name == "Gender":
                         subgroup_series = codes.map(gender_inv_map).fillna("Unknown")
                     elif col_name == "Race":
@@ -801,7 +789,7 @@ with tab_research:
                         subgroup_series = codes.astype(str)
 
             df_sub = pd.DataFrame({
-                "Subgroup": subgroup_series.astype(str),
+                "Subgroup": subgroup_series,
                 "b_diab": b_diab,
                 "b_ckd": b_ckd,
                 "b_cvd": b_cvd,
