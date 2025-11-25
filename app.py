@@ -544,6 +544,9 @@ with tab_research:
     # ============================================================
     # 3. Population scenario simulator (multi-variable)
     # ============================================================
+        # ============================================================
+    # 3. Population scenario simulator (multi-variable)
+    # ============================================================
     st.subheader("Population scenario simulator")
 
     if not HAVE_NHANES_SIM:
@@ -630,7 +633,13 @@ with tab_research:
             index=0
         )
 
-        if st.button("Run population scenario", key="run_sim"):
+        run_clicked = st.button("Run population scenario", key="run_sim")
+
+        # --------------------------------------------------------
+        # Run simulation only when the button is clicked
+        # Store results in session_state so plots persist
+        # --------------------------------------------------------
+        if run_clicked:
             # --- draw sample of real NHANES rows ---
             available_idx = nhanes_sim.index
             sampled_idx = rng.choice(available_idx, size=pop_n, replace=True)
@@ -708,44 +717,7 @@ with tab_research:
                 np.nan
             )
 
-            st.markdown("**Overall average predicted risk (baseline vs scenario)**")
-            st.dataframe(
-                overall.style.format({
-                    "Baseline_mean": "{:.5f}",
-                    "Scenario_mean": "{:.5f}",
-                    "Absolute_change": "{:.5f}",
-                    "Relative_change_%": "{:.2f}",
-                }),
-                use_container_width=True
-            )
-
-            # ---------- % change bar chart ----------
-            fig_change = go.Figure()
-            fig_change.add_trace(
-                go.Bar(
-                    x=overall["Disease"],
-                    y=overall["Relative_change_%"],
-                )
-            )
-            fig_change.update_layout(
-                yaxis_title="Relative change in mean risk (%)",
-                xaxis_title="Disease",
-                margin=dict(l=40, r=40, t=40, b=40),
-                shapes=[
-                    dict(
-                        type="line",
-                        x0=-0.5, x1=2.5,
-                        y0=0, y1=0,
-                        line=dict(color="grey", dash="dash")
-                    )
-                ]
-            )
-            st.plotly_chart(fig_change, use_container_width=True)
-
-            # ---------- subgroup summary ----------
             # ---------- subgroup contributions (decomposition) ----------
-            st.markdown(f"**Subgroup contributions to overall change – grouped by {strat_option}**")
-
             # Build subgroup labels from raw pop_df (baseline structure)
             if strat_option == "AgeYears (binned)":
                 if "AgeYears" in pop_df.columns:
@@ -784,7 +756,6 @@ with tab_research:
                     else:
                         subgroup_series = codes.astype(str)
 
-            # Combine predictions + subgroup labels
             df_sub = pd.DataFrame({
                 "Subgroup": subgroup_series,
                 "b_diab": b_diab,
@@ -795,7 +766,6 @@ with tab_research:
                 "i_cvd": i_cvd,
             })
 
-            # Compute population-share–weighted contributions
             grp = df_sub.groupby("Subgroup")
             contrib_rows = []
             N = len(df_sub)
@@ -831,7 +801,56 @@ with tab_research:
 
             contrib_df = pd.DataFrame(contrib_rows)
 
-            # ---- Disease toggle + side-by-side bars ----
+            # Store results so plots persist on rerun
+            st.session_state["sim_overall"] = overall
+            st.session_state["sim_contrib_df"] = contrib_df
+            st.session_state["sim_strat_option"] = strat_option
+
+        # --------------------------------------------------------
+        # Render results from the last run (if available)
+        # --------------------------------------------------------
+        if "sim_overall" in st.session_state:
+            overall = st.session_state["sim_overall"]
+
+            st.markdown("**Overall average predicted risk (baseline vs scenario)**")
+            st.dataframe(
+                overall.style.format({
+                    "Baseline_mean": "{:.5f}",
+                    "Scenario_mean": "{:.5f}",
+                    "Absolute_change": "{:.5f}",
+                    "Relative_change_%": "{:.2f}",
+                }),
+                use_container_width=True
+            )
+
+            fig_change = go.Figure()
+            fig_change.add_trace(
+                go.Bar(
+                    x=overall["Disease"],
+                    y=overall["Relative_change_%"],
+                )
+            )
+            fig_change.update_layout(
+                yaxis_title="Relative change in mean risk (%)",
+                xaxis_title="Disease",
+                margin=dict(l=40, r=40, t=40, b=40),
+                shapes=[
+                    dict(
+                        type="line",
+                        x0=-0.5, x1=2.5,
+                        y0=0, y1=0,
+                        line=dict(color="grey", dash="dash")
+                    )
+                ]
+            )
+            st.plotly_chart(fig_change, use_container_width=True)
+
+        if "sim_contrib_df" in st.session_state:
+            contrib_df = st.session_state["sim_contrib_df"]
+            used_strat = st.session_state.get("sim_strat_option", strat_option)
+
+            st.markdown(f"**Subgroup contributions to overall change – grouped by {used_strat}**")
+
             disease_choice = st.selectbox(
                 "Disease to visualize by subgroup",
                 ["Diabetes", "CKD", "CVD"],
@@ -852,8 +871,8 @@ with tab_research:
             )
 
             fig_sub.update_layout(
-                barmode="group",  # side-by-side style (even though single series)
-                xaxis_title=f"{strat_option} subgroup",
+                barmode="group",  # side-by-side style (single series)
+                xaxis_title=f"{used_strat} subgroup",
                 yaxis_title="Absolute change in mean risk\n(population-share-weighted)",
                 margin=dict(l=40, r=40, t=80, b=80),
             )
@@ -865,6 +884,5 @@ with tab_research:
                 f"risk for {disease_choice}. The sum of the bar heights equals the overall "
                 "absolute change for that disease shown in the table above."
             )
-
 
 
