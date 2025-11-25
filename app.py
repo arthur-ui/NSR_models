@@ -10,8 +10,8 @@ from plotly.subplots import make_subplots
 # Load trained models
 # ===========================
 pipe_diab = joblib.load("diabetes_model.joblib")
-pipe_ckd  = joblib.load("ckd_model.joblib")
-pipe_cvd  = joblib.load("cvd_model.joblib")
+pipe_ckd = joblib.load("ckd_model.joblib")
+pipe_cvd = joblib.load("cvd_model.joblib")
 
 st.set_page_config(page_title="Non-Dietary Chronic Disease Risk Tool", page_icon="🧬")
 
@@ -37,22 +37,40 @@ education_map = {
     "Some college or AA degree": 4,
     "College graduate or above": 5,
 }
+education_inv_map = {v: k for k, v in education_map.items()}
+
 gender_map = {"Male": 1, "Female": 2}
+gender_inv_map = {v: k for k, v in gender_map.items()}
+
 race_map = {
     "Non-Hispanic White": 1,
     "Non-Hispanic Black": 2,
     "Hispanic": 3,
     "Other": 4,
 }
-smoke_map = {"No": 0, "Yes": 1}
-activity_map = {"Low": 0, "Moderate": 1, "High": 2}
+race_inv_map = {v: k for k, v in race_map.items()}
 
-# reverse maps for labelling subgroups
-gender_rev = {v: k for k, v in gender_map.items()}
-race_rev = {v: k for k, v in race_map.items()}
-education_rev = {v: k for k, v in education_map.items()}
-activity_rev = {0: "Low", 1: "Moderate", 2: "High"}
-smoking_rev = {0: "No", 1: "Yes"}
+smoke_map = {"No": 0, "Yes": 1}
+smoke_inv_map = {v: k for k, v in smoke_map.items()}
+
+activity_map = {"Low": 0, "Moderate": 1, "High": 2}
+activity_inv_map = {v: k for k, v in activity_map.items()}
+
+FEATURE_COLS = [
+    "bmi",
+    "AgeYears",
+    "waist_circumference",
+    "activity_level",
+    "smoking",
+    "avg_systolic",
+    "avg_diastolic",
+    "avg_HR",
+    "FamIncome_to_poverty_ratio",
+    "Education",
+    "Race",
+    "Gender",
+]
+
 
 def compute_poverty_threshold(household_size: int) -> int:
     if household_size <= 8:
@@ -84,48 +102,58 @@ def build_feature_df(
 def predict_three(X: pd.DataFrame):
     """Return probabilities for diabetes, CKD, CVD as tuple of 1D numpy arrays."""
     p_diab = pipe_diab.predict_proba(X)[:, 1]
-    p_ckd  = pipe_ckd.predict_proba(X)[:, 1]
-    p_cvd  = pipe_cvd.predict_proba(X)[:, 1]
+    p_ckd = pipe_ckd.predict_proba(X)[:, 1]
+    p_cvd = pipe_cvd.predict_proba(X)[:, 1]
     return p_diab, p_ckd, p_cvd
 
 
 # -------------------------------------------------
-# Load NHANES test data for simulation
+# Load NHANES test set for simulation (real rows)
 # -------------------------------------------------
-# This file should live alongside the app script in the repo
-nhanes_raw = pd.read_csv("nhanes_test_for_sim.csv")
+try:
+    nhanes_sim = pd.read_csv("nhanes_test_for_sim.csv")
+    HAVE_NHANES_SIM = True
+except Exception:
+    nhanes_sim = None
+    HAVE_NHANES_SIM = False
 
-# Features the models expect (same as baseline_df / base_df)
-feature_cols_sim = [
-    "bmi",
-    "AgeYears",
-    "waist_circumference",
-    "activity_level",
-    "smoking",
-    "avg_systolic",
-    "avg_diastolic",
-    "avg_HR",
-    "FamIncome_to_poverty_ratio",
-    "Education",
-    "Race",
-    "Gender",
-]
+# Precompute means for imputation on the columns we care about
+if HAVE_NHANES_SIM:
+    numeric_for_mean = [
+        "bmi",
+        "AgeYears",
+        "waist_circumference",
+        "avg_systolic",
+        "avg_diastolic",
+        "avg_HR",
+        "FamIncome_to_poverty_ratio",
+        "activity_level",
+        "smoking",
+        "Education",
+        "Race",
+        "Gender",
+    ]
+    existing_cols = [c for c in numeric_for_mean if c in nhanes_sim.columns]
+    nhanes_means = nhanes_sim[existing_cols].mean(numeric_only=True)
+else:
+    nhanes_means = pd.Series(dtype=float)
 
-# Create a cleaned version for simulation: only needed columns,
-# numeric coercion + mean imputation for missing values
-nhanes_sim = nhanes_raw.copy()
-for col in feature_cols_sim:
-    if col in nhanes_sim.columns:
-        nhanes_sim[col] = pd.to_numeric(nhanes_sim[col], errors="coerce")
 
-# Impute missing values per column with column mean
-for col in feature_cols_sim:
-    if col in nhanes_sim.columns:
-        col_mean = nhanes_sim[col].mean(skipna=True)
-        nhanes_sim[col] = nhanes_sim[col].fillna(col_mean)
+def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure the dataframe has all feature columns and impute missing numeric values."""
+    df = df.copy()
+    # add missing feature columns, if any
+    for col in FEATURE_COLS:
+        if col not in df.columns:
+            df[col] = np.nan
 
-# Restrict to only the columns we actually use in the simulator
-nhanes_sim = nhanes_sim[feature_cols_sim].copy()
+    # Impute numeric columns using NHANES means if available
+    for col in FEATURE_COLS:
+        if df[col].dtype.kind in "biufc":  # numeric
+            mean_val = nhanes_means.get(col, df[col].mean())
+            df[col] = df[col].fillna(mean_val)
+
+    return df[FEATURE_COLS].copy()
 
 
 # ===========================
@@ -246,12 +274,12 @@ with tab_calc:
 with tab_research:
     st.title("Researcher tools & sensitivity analysis")
     st.caption(
-        "Explore how changes in individual predictors affect modelled risk for "
+        "Explore how changes in predictors affect modelled risk for "
         "diabetes, CKD, and CVD. All calculations use the same non-laboratory "
         "models as the main risk calculator."
     )
 
-    # ---------------- Baseline profile for research tools ----------------
+    # ---------------- Baseline profile for 1D/2D tools ----------------
     st.subheader("Baseline profile (held constant for sensitivity analyses)")
     colB1, colB2, colB3 = st.columns(3)
 
@@ -263,7 +291,7 @@ with tab_research:
     with colB2:
         sbp_r = st.number_input("Systolic BP (mmHg)", 80, 220, 135, key="sbp_r")
         dbp_r = st.number_input("Diastolic BP (mmHg)", 40, 140, 80, key="dbp_r")
-        hr_r  = st.number_input("Resting heart rate (bpm)", 40, 140, 72, key="hr_r")
+        hr_r = st.number_input("Resting heart rate (bpm)", 40, 140, 72, key="hr_r")
 
     with colB3:
         family_income_r = st.number_input("Annual family income (USD)", 0, 300000, 60000, key="inc_r")
@@ -405,12 +433,10 @@ with tab_research:
     h_diab, h_ckd, h_cvd = predict_three(grid_X)
 
     z_diab = h_diab.reshape(n_y, n_x)
-    z_ckd  = h_ckd.reshape(n_y, n_x)
-    z_cvd  = h_cvd.reshape(n_y, n_x)
+    z_ckd = h_ckd.reshape(n_y, n_x)
+    z_cvd = h_cvd.reshape(n_y, n_x)
 
-    max_risk = float(
-        max(z_diab.max(), z_ckd.max(), z_cvd.max())
-    )
+    max_risk = float(max(z_diab.max(), z_ckd.max(), z_cvd.max()))
 
     fig_heat = make_subplots(
         rows=1, cols=3,
@@ -436,12 +462,10 @@ with tab_research:
         coloraxis=dict(colorscale="Viridis", cmin=0.0, cmax=max_risk),
         margin=dict(l=40, r=40, t=40, b=40),
     )
-    fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=1)
-    fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=2)
-    fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=3)
-    fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=1)
-    fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=2)
-    fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=3)
+    for c in [1, 2, 3]:
+        fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=c)
+    for c in [1, 2, 3]:
+        fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=c)
 
     st.plotly_chart(fig_heat, use_container_width=True)
     st.caption(
@@ -452,232 +476,138 @@ with tab_research:
     st.markdown("---")
 
     # ============================================================
-    # 3. Population scenario simulator (multi-variable changes)
-    #      using jittered real NHANES rows
+    # 3. Population scenario simulator (multi-variable)
     # ============================================================
-    st.subheader("Population scenario simulator (NHANES-based)")
+    st.subheader("Population scenario simulator")
 
-    st.markdown(
-        "Sample real NHANES participants, optionally jitter their values, then "
-        "modify any combination of predictors and compare predicted risk before "
-        "and after the scenario overall and across subgroups."
-    )
-
-    colP1, colP2, colP3 = st.columns(3)
-    with colP1:
-        pop_n = st.slider("Population size", 200, 20000, 3000, step=200, key="pop_n")
-    with colP2:
-        seed = st.number_input("Random seed", min_value=0, max_value=10000, value=42, key="seed_pop")
-    with colP3:
-        jitter_pct = st.slider(
-            "Jitter continuous variables by ±%",
-            0.0, 50.0, 10.0, step=1.0, key="jitter_pct"
+    if not HAVE_NHANES_SIM:
+        st.warning("nhanes_test_for_sim.csv not found. Upload it to enable the simulator.")
+    else:
+        st.markdown(
+            "Draw a synthetic population from real NHANES rows (with jitter), "
+            "modify any subset of predictors, and compare baseline vs scenario risks "
+            "overall and by subgroup."
         )
 
-    rng = np.random.default_rng(seed)
+        colP1, colP2, colP3 = st.columns(3)
+        with colP1:
+            pop_n = st.slider("Population size", 500, 10000, 3000, step=500, key="pop_n")
+        with colP2:
+            jitter_pct = st.slider("Jitter on continuous vars (%)", 0.0, 20.0, 5.0, step=1.0)
+        with colP3:
+            seed = st.number_input("Random seed", min_value=0, max_value=10000, value=42, key="seed_pop")
 
-    # ---- General scenario specification: any n variables ----
-    st.markdown("**Choose which variables to change in the scenario**")
+        rng = np.random.default_rng(seed)
 
-    sim_var_options = {
-        "Age (years)": {
-            "col": "AgeYears",
-            "type": "numeric",
-            "delta_min": -20.0,
-            "delta_max": 20.0,
-            "delta_default": -5.0,
-            "step": 1.0,
-            "clip_min": 18.0,
-        },
-        "BMI (kg/m²)": {
-            "col": "bmi",
-            "type": "numeric",
-            "delta_min": -10.0,
-            "delta_max": 10.0,
-            "delta_default": -2.0,
-            "step": 0.5,
-            "clip_min": 15.0,
-        },
-        "Waist circumference (cm)": {
-            "col": "waist_circumference",
-            "type": "numeric",
-            "delta_min": -30.0,
-            "delta_max": 30.0,
-            "delta_default": -5.0,
-            "step": 1.0,
-            "clip_min": 50.0,
-        },
-        "Systolic BP (mmHg)": {
-            "col": "avg_systolic",
-            "type": "numeric",
-            "delta_min": -40.0,
-            "delta_max": 40.0,
-            "delta_default": -10.0,
-            "step": 1.0,
-            "clip_min": 80.0,
-        },
-        "Diastolic BP (mmHg)": {
-            "col": "avg_diastolic",
-            "type": "numeric",
-            "delta_min": -30.0,
-            "delta_max": 30.0,
-            "delta_default": -5.0,
-            "step": 1.0,
-            "clip_min": 40.0,
-        },
-        "Resting HR (bpm)": {
-            "col": "avg_HR",
-            "type": "numeric",
-            "delta_min": -30.0,
-            "delta_max": 30.0,
-            "delta_default": -5.0,
-            "step": 1.0,
-            "clip_min": 40.0,
-        },
-        "Income-to-poverty ratio": {
-            "col": "FamIncome_to_poverty_ratio",
-            "type": "numeric",
-            "delta_min": -1.0,
-            "delta_max": 5.0,
-            "delta_default": 0.5,
-            "step": 0.1,
-            "clip_min": 0.1,
-        },
-        "Smoking status": {
-            "col": "smoking",
-            "type": "categorical",
-        },
-    }
+        # ----- choose numeric variables to modify -----
+        st.markdown("**Numeric variables to modify (additive change)**")
+        numeric_mod_options = {
+            "Age (years)": ("AgeYears", -20.0, 20.0, 1.0),
+            "BMI (kg/m²)": ("bmi", -10.0, 10.0, 0.5),
+            "Waist circumference (cm)": ("waist_circumference", -30.0, 30.0, 1.0),
+            "Systolic BP (mmHg)": ("avg_systolic", -40.0, 40.0, 1.0),
+            "Diastolic BP (mmHg)": ("avg_diastolic", -30.0, 30.0, 1.0),
+            "Resting HR (bpm)": ("avg_HR", -30.0, 30.0, 1.0),
+            "Income-to-poverty ratio": ("FamIncome_to_poverty_ratio", -2.0, 2.0, 0.1),
+        }
+        selected_numeric = st.multiselect(
+            "Select numeric variables to change",
+            list(numeric_mod_options.keys())
+        )
 
-    selected_vars = st.multiselect(
-        "Variables to change in the scenario",
-        list(sim_var_options.keys()),
-        default=["Systolic BP (mmHg)"]
-    )
-
-    numeric_deltas = {}
-    smoking_action = None
-
-    for var_label in selected_vars:
-        spec = sim_var_options[var_label]
-        if spec["type"] == "numeric":
-            col1_int, col2_int = st.columns([2, 1])
-            with col1_int:
-                delta = st.slider(
-                    f"Change in {var_label}",
-                    min_value=float(spec["delta_min"]),
-                    max_value=float(spec["delta_max"]),
-                    value=float(spec["delta_default"]),
-                    step=float(spec["step"]),
-                    key=f"delta_{spec['col']}"
-                )
-            with col2_int:
-                st.write("Δ applied additively to each individual.")
-            numeric_deltas[spec["col"]] = (delta, spec["clip_min"])
-        elif spec["type"] == "categorical" and var_label == "Smoking status":
-            smoking_action = st.selectbox(
-                "Smoking change",
-                ["No change", "Set all to non-smokers", "Set all to smokers"],
-                index=1,
-                key="smoking_action"
+        numeric_deltas = {}
+        for label in selected_numeric:
+            col_name, dmin, dmax, step = numeric_mod_options[label]
+            numeric_deltas[col_name] = st.slider(
+                f"{label} change",
+                float(dmin), float(dmax), 0.0, step=float(step),
+                key=f"delta_{col_name}"
             )
 
-    # ---- Stratification variable for subgroup plots ----
-    st.markdown("**Stratify results by**")
-    strat_choice = st.selectbox(
-        "Subgroup variable for plotting",
-        [
-            "Gender",
-            "Race",
-            "Education",
-            "Smoking",
-            "Activity level",
-            "Age group (10-year bins)",
-            "BMI category",
-        ],
-        index=0
-    )
+        # ----- categorical overrides -----
+        st.markdown("**Categorical variables to override**")
+        cat_mod_options = {
+            "Smoking status": ("smoking", smoke_map),
+            "Activity level": ("activity_level", activity_map),
+            "Gender": ("Gender", gender_map),
+            "Race/ethnicity": ("Race", race_map),
+            "Education": ("Education", education_map),
+        }
+        selected_cat = st.multiselect(
+            "Select categorical variables to override",
+            list(cat_mod_options.keys())
+        )
 
-    # ---- Run simulation ----
-    if st.button("Run population simulation", key="run_sim"):
-        # ---------- sample real NHANES rows ----------
-        n_available = len(nhanes_sim)
-        if n_available == 0:
-            st.error("NHANES simulation dataset is empty or not loaded correctly.")
-        else:
-            idx = rng.choice(n_available, size=pop_n, replace=True)
-            base_df = nhanes_sim.iloc[idx].reset_index(drop=True)
+        cat_overrides = {}
+        for label in selected_cat:
+            col_name, mapping = cat_mod_options[label]
+            rev = {v: k for k, v in mapping.items()}
+            # show human labels
+            new_label = st.selectbox(
+                f"Set {label} to",
+                list(mapping.keys()),
+                key=f"override_{col_name}"
+            )
+            cat_overrides[col_name] = mapping[new_label]
 
-            # ---------- jitter continuous variables ----------
-            base_df_model = base_df.copy()
-            continuous_cols = [
-                "bmi",
+        # ----- stratification options -----
+        st.markdown("**Stratify results by**")
+        strat_option = st.selectbox(
+            "Subgroup variable",
+            [
+                "Gender",
+                "Race",
+                "Education",
+                "smoking",
+                "activity_level",
+                "AgeYears (binned)",
+                "bmi (binned)",
+            ],
+            index=0
+        )
+
+        if st.button("Run population scenario", key="run_sim"):
+            # --- draw sample of real NHANES rows ---
+            available_idx = nhanes_sim.index
+            sampled_idx = rng.choice(available_idx, size=pop_n, replace=True)
+            pop_df = nhanes_sim.loc[sampled_idx].copy()
+
+            # ensure required columns exist
+            for col in FEATURE_COLS:
+                if col not in pop_df.columns:
+                    pop_df[col] = np.nan
+
+            # jitter continuous predictors
+            jitter_frac = jitter_pct / 100.0
+            jitter_cols = [
                 "AgeYears",
+                "bmi",
                 "waist_circumference",
                 "avg_systolic",
                 "avg_diastolic",
                 "avg_HR",
                 "FamIncome_to_poverty_ratio",
             ]
-            if jitter_pct > 0:
-                scale = jitter_pct / 100.0
-                for col in continuous_cols:
-                    if col in base_df_model.columns:
-                        noise = rng.uniform(1.0 - scale, 1.0 + scale, size=pop_n)
-                        base_df_model[col] = base_df_model[col] * noise
+            for col in jitter_cols:
+                if col in pop_df.columns:
+                    factor = rng.uniform(1.0 - jitter_frac, 1.0 + jitter_frac, size=pop_df.shape[0])
+                    pop_df[col] = pop_df[col] * factor
 
-            # ---------- create strata labels from coded variables ----------
-            # Use rounded ints for mapping to avoid issues if means were used in imputation
-            def as_int_series(x):
-                return pd.to_numeric(x, errors="coerce").round().astype("Int64")
+            # prepare baseline feature matrix
+            base_X = prepare_for_model(pop_df)
+            b_diab, b_ckd, b_cvd = predict_three(base_X)
 
-            gender_label = as_int_series(base_df_model["Gender"]).map(gender_rev)
-            race_label = as_int_series(base_df_model["Race"]).map(race_rev)
-            educ_label = as_int_series(base_df_model["Education"]).map(education_rev)
-            smoking_label = as_int_series(base_df_model["smoking"]).map(smoking_rev)
-            activity_label = as_int_series(base_df_model["activity_level"]).map(activity_rev)
+            # apply numeric deltas and categorical overrides
+            scenario_df = pop_df.copy()
+            for col_name, delta in numeric_deltas.items():
+                if col_name in scenario_df.columns:
+                    scenario_df[col_name] = scenario_df[col_name] + delta
 
-            strata_df = pd.DataFrame({
-                "Gender": gender_label.astype(str),
-                "Race": race_label.astype(str),
-                "Education": educ_label.astype(str),
-                "Smoking": smoking_label.astype(str),
-                "Activity level": activity_label.astype(str),
-                "Age group (10-year bins)": pd.cut(
-                    base_df_model["AgeYears"],
-                    bins=[18, 30, 40, 50, 60, 70, 90],
-                    right=False,
-                    include_lowest=True
-                ).astype(str),
-                "BMI category": pd.cut(
-                    base_df_model["bmi"],
-                    bins=[0, 18.5, 25, 30, 35, 100],
-                    labels=["<18.5", "18.5–24.9", "25–29.9", "30–34.9", "≥35"],
-                    include_lowest=True
-                ).astype(str),
-            })
+            for col_name, new_val in cat_overrides.items():
+                scenario_df[col_name] = new_val
 
-            # Baseline predictions
-            b_diab, b_ckd, b_cvd = predict_three(base_df_model)
-
-            # ---------- apply scenario changes ----------
-            int_df = base_df_model.copy()
-
-            # Numeric deltas: additive + clipping
-            for col_name, (delta, clip_min) in numeric_deltas.items():
-                if col_name in int_df.columns:
-                    int_df[col_name] = np.clip(int_df[col_name] + delta, clip_min, None)
-
-            # Smoking action
-            if smoking_action is not None and "Smoking status" in selected_vars:
-                if smoking_action == "Set all to non-smokers":
-                    int_df["smoking"] = smoke_map["No"]
-                elif smoking_action == "Set all to smokers":
-                    int_df["smoking"] = smoke_map["Yes"]
-                # "No change" does nothing
-
-            # Scenario predictions
-            i_diab, i_ckd, i_cvd = predict_three(int_df)
+            scen_X = prepare_for_model(scenario_df)
+            i_diab, i_ckd, i_cvd = predict_three(scen_X)
 
             # ---------- overall summary ----------
             overall = pd.DataFrame({
@@ -685,14 +615,14 @@ with tab_research:
                 "Baseline_mean": [
                     float(b_diab.mean()), float(b_ckd.mean()), float(b_cvd.mean())
                 ],
-                "Post_mean": [
+                "Scenario_mean": [
                     float(i_diab.mean()), float(i_ckd.mean()), float(i_cvd.mean())
                 ],
             })
-            overall["Absolute_change"] = overall["Post_mean"] - overall["Baseline_mean"]
+            overall["Absolute_change"] = overall["Scenario_mean"] - overall["Baseline_mean"]
             overall["Relative_change_%"] = np.where(
                 overall["Baseline_mean"] > 0,
-                100 * overall["Absolute_change"] / overall["Baseline_mean"],
+                100.0 * overall["Absolute_change"] / overall["Baseline_mean"],
                 np.nan
             )
 
@@ -700,14 +630,14 @@ with tab_research:
             st.dataframe(
                 overall.style.format({
                     "Baseline_mean": "{:.5f}",
-                    "Post_mean": "{:.5f}",
+                    "Scenario_mean": "{:.5f}",
                     "Absolute_change": "{:.5f}",
                     "Relative_change_%": "{:.2f}",
                 }),
                 use_container_width=True
             )
 
-            # ---------- % change bar chart across diseases ----------
+            # ---------- % change bar chart ----------
             fig_change = go.Figure()
             fig_change.add_trace(
                 go.Bar(
@@ -730,10 +660,50 @@ with tab_research:
             )
             st.plotly_chart(fig_change, use_container_width=True)
 
-            # ---------- subgroup summary (side-by-side bars) ----------
-            st.markdown(f"**Subgroup effects by {strat_choice}**")
+            # ---------- subgroup summary ----------
+            st.markdown(f"**Subgroup effects by {strat_option}**")
 
-            subgroup_series = strata_df[strat_choice]
+            # build subgroup labels
+            if strat_option == "AgeYears (binned)":
+                if "AgeYears" in pop_df.columns:
+                    subgroup_series = pd.cut(
+                        pop_df["AgeYears"],
+                        bins=[0, 40, 60, 200],
+                        labels=["<40", "40–59", "≥60"]
+                    )
+                else:
+                    subgroup_series = pd.Series(["All"] * pop_df.shape[0])
+            elif strat_option == "bmi (binned)":
+                if "bmi" in pop_df.columns:
+                    subgroup_series = pd.cut(
+                        pop_df["bmi"],
+                        bins=[0, 25, 30, 100],
+                        labels=["<25", "25–29.9", "≥30"]
+                    )
+                else:
+                    subgroup_series = pd.Series(["All"] * pop_df.shape[0])
+            else:
+                # categorical coded variables
+                col_name = strat_option
+                if strat_option in ["Gender", "Race", "Education", "smoking", "activity_level"]:
+                    col_name = strat_option
+                if col_name not in pop_df.columns:
+                    subgroup_series = pd.Series(["All"] * pop_df.shape[0])
+                else:
+                    codes = pop_df[col_name]
+                    if col_name == "Gender":
+                        subgroup_series = codes.map(gender_inv_map).fillna("Unknown")
+                    elif col_name == "Race":
+                        subgroup_series = codes.map(race_inv_map).fillna("Unknown")
+                    elif col_name == "Education":
+                        subgroup_series = codes.map(education_inv_map).fillna("Unknown")
+                    elif col_name == "smoking":
+                        subgroup_series = codes.map(smoke_inv_map).fillna("Unknown")
+                    elif col_name == "activity_level":
+                        subgroup_series = codes.map(activity_inv_map).fillna("Unknown")
+                    else:
+                        subgroup_series = codes.astype(str)
+
             df_sub = pd.DataFrame({
                 "Subgroup": subgroup_series,
                 "b_diab": b_diab,
@@ -744,21 +714,21 @@ with tab_research:
                 "i_cvd": i_cvd,
             })
 
-            grp = df_sub.groupby("Subgroup", as_index=False).mean()
+            grp = df_sub.groupby("Subgroup", as_index=False).mean(numeric_only=True)
             grp_long = pd.DataFrame({
                 "Subgroup": np.repeat(grp["Subgroup"].values, 3),
                 "Disease": ["Diabetes", "CKD", "CVD"] * len(grp),
                 "Baseline": np.concatenate([grp["b_diab"], grp["b_ckd"], grp["b_cvd"]]),
-                "Post": np.concatenate([grp["i_diab"], grp["i_ckd"], grp["i_cvd"]]),
+                "Scenario": np.concatenate([grp["i_diab"], grp["i_ckd"], grp["i_cvd"]]),
             })
-            grp_long["Absolute_change"] = grp_long["Post"] - grp_long["Baseline"]
+            grp_long["Absolute_change"] = grp_long["Scenario"] - grp_long["Baseline"]
 
             fig_sub = go.Figure()
             for disease in ["Diabetes", "CKD", "CVD"]:
                 mask = grp_long["Disease"] == disease
                 fig_sub.add_trace(
                     go.Bar(
-                        x=grp_long.loc[mask, "Subgroup"],
+                        x=grp_long.loc[mask, "Subgroup"].astype(str),
                         y=grp_long.loc[mask, "Absolute_change"],
                         name=disease
                     )
@@ -766,15 +736,16 @@ with tab_research:
 
             fig_sub.update_layout(
                 barmode="group",
-                xaxis_title=strat_choice,
+                xaxis_title=strat_option,
                 yaxis_title="Change in mean risk (scenario - baseline)",
-                margin=dict(l=40, r=40, t=40, b=40)
+                margin=dict(l=40, r=40, t=40, b=80),
+                legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
             )
 
             st.plotly_chart(fig_sub, use_container_width=True)
 
             st.caption(
                 "Bars show the absolute change in mean modelled risk within each subgroup "
-                "after applying the selected scenario, relative to baseline."
+                "after applying the chosen scenario, relative to baseline."
             )
 
