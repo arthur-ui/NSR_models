@@ -30,6 +30,9 @@ BASE_POVERTY_48 = {
 }
 EXTRA_PER_PERSON_48 = 5500
 
+# IMPORTANT: these maps now match the TRAINING CODEBOOK
+
+# Education (DMDEDUC2-style)
 education_map = {
     "Less than 9th grade": 1,
     "9-11th grade (Includes 12th w/o diploma)": 2,
@@ -39,23 +42,48 @@ education_map = {
 }
 education_inv_map = {v: k for k, v in education_map.items()}
 
+# Gender: 1 = Male, 2 = Female
 gender_map = {"Male": 1, "Female": 2}
-gender_inv_map = {v: k for k, v in gender_map.items()}
+gender_inv_map = {1: "Male", 2: "Female"}
 
+# Race: using RIDRETH3 codes
+# 1 = Mexican American
+# 2 = Other Hispanic
+# 3 = Non-Hispanic White
+# 4 = Non-Hispanic Black
+# 6 = Non-Hispanic Asian
+# 7 = Other / Multi
 race_map = {
-    "Non-Hispanic White": 1,
-    "Non-Hispanic Black": 2,
-    "Hispanic": 3,
-    "Other": 4,
+    "Non-Hispanic White": 3,
+    "Non-Hispanic Black": 4,
+    "Hispanic": 1,  # we treat all Hispanics as code 1 for UI purposes
+    "Other": 7,     # other/multi/Asian get grouped as "Other" for UI purposes
 }
-race_inv_map = {v: k for k, v in race_map.items()}
+def race_code_to_label(code):
+    # Use training-style codes and collapse to 4 labels for display
+    if code == 3:
+        return "Non-Hispanic White"
+    elif code == 4:
+        return "Non-Hispanic Black"
+    elif code in [1, 2]:
+        return "Hispanic"
+    elif code in [6, 7]:
+        return "Other"
+    else:
+        return "Unknown"
 
-# NOTE: model was trained with numeric “smoking” but we’ll use 0/1 here
-smoke_map = {"No": 0, "Yes": 1}
-smoke_inv_map = {v: k for k, v in smoke_map.items()}
+# Smoking: training uses 1/2 (1 = non-smoker, 2 = smoker)
+smoke_map = {"No": 1, "Yes": 2}
+smoke_inv_map = {1: "No", 2: "Yes"}
 
-activity_map = {"Low": 0, "Moderate": 1, "High": 2}
-activity_inv_map = {v: k for k, v in activity_map.items()}
+# Activity level: training has 0,1,2,3; assume 1=Low,2=Moderate,3=High,0=Unknown
+activity_map = {"Low": 1, "Moderate": 2, "High": 3}
+activity_inv_map = {
+    0: "Unknown",
+    1: "Low",
+    2: "Moderate",
+    3: "High",
+}
 
 FEATURE_COLS = [
     "bmi",
@@ -119,49 +147,19 @@ except Exception:
     HAVE_NHANES_SIM = False
 
 if HAVE_NHANES_SIM:
-    # strip whitespace in column names
+    # Strip whitespace in column names
     nhanes_sim.columns = nhanes_sim.columns.str.strip()
 
-    # ---------- recode / clean categorical variables ----------
-
-    # Race (RIDRETH3 -> 4-category scheme)
-    # 1 = Mexican American
-    # 2 = Other Hispanic
-    # 3 = Non-Hispanic White
-    # 4 = Non-Hispanic Black
-    # 6 = Non-Hispanic Asian
-    # 7 = Other / Multi
-    if "Race" in nhanes_sim.columns:
-        race_raw = pd.to_numeric(nhanes_sim["Race"], errors="coerce").astype("Int64")
-        race_recode = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-
-        race_recode[race_raw == 3] = 1  # Non-Hispanic White
-        race_recode[race_raw == 4] = 2  # Non-Hispanic Black
-        race_recode[race_raw.isin([1, 2])] = 3  # Hispanic
-        race_recode[race_raw.isin([6, 7])] = 4  # Other
-
-        nhanes_sim["Race"] = race_recode
-
-    # Smoking: your training file had 0/1/2 + blanks; we standardize to 0/1 here.
-    if "smoking" in nhanes_sim.columns:
-        sm_raw = pd.to_numeric(nhanes_sim["smoking"], errors="coerce").astype("Int64")
-        sm_clean = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-        # assume 1 = non-smoker, 2 = smoker
-        sm_clean[sm_raw == 1] = 0
-        sm_clean[sm_raw == 2] = 1
-        nhanes_sim["smoking"] = sm_clean
-
-    # Education: keep 1–5, others -> NaN
-    if "Education" in nhanes_sim.columns:
-        edu_raw = pd.to_numeric(nhanes_sim["Education"], errors="coerce").astype("Int64")
-        edu_clean = pd.Series(np.nan, index=nhanes_sim.index, dtype="float")
-        edu_clean[edu_raw.isin([1, 2, 3, 4, 5])] = edu_raw[edu_raw.isin([1, 2, 3, 4, 5])]
-        nhanes_sim["Education"] = edu_clean
-
-    # Force all feature cols to numeric (strings/blanks -> NaN)
+    # Force all feature cols to numeric (turn weird strings -> NaN)
     for col in FEATURE_COLS:
         if col in nhanes_sim.columns:
             nhanes_sim[col] = pd.to_numeric(nhanes_sim[col], errors="coerce")
+
+    # Clean Education: keep 1–5, everything else -> NaN
+    if "Education" in nhanes_sim.columns:
+        edu_raw = nhanes_sim["Education"]
+        edu_clean = edu_raw.where(edu_raw.isin([1, 2, 3, 4, 5]), np.nan)
+        nhanes_sim["Education"] = edu_clean
 
     # Clip continuous vars to plausible ranges
     clip_ranges = {
@@ -204,15 +202,16 @@ else:
 
 
 def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensure the dataframe has all feature columns, coerce to numeric, and
-    impute missing values with NHANES means (or column mean fallback).
-    """
+    """Ensure the dataframe has all feature columns and impute missing numeric values."""
     df = df.copy()
 
+    # Ensure all feature columns exist
     for col in FEATURE_COLS:
         if col not in df.columns:
             df[col] = np.nan
+
+    # Coerce everything to numeric and impute
+    for col in FEATURE_COLS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
         mean_val = nhanes_means.get(col, df[col].mean())
         df[col] = df[col].fillna(mean_val)
@@ -317,8 +316,7 @@ with tab_calc:
             race_label=race, gender_label=gender
         )
 
-        X_model = prepare_for_model(X)
-        p_diab, p_ckd, p_cvd = predict_three(X_model)
+        p_diab, p_ckd, p_cvd = predict_three(X)
 
         r1, r2, r3 = st.columns(3)
         r1.metric("Diabetes risk", f"{p_diab[0]*100:.1f}%")
@@ -383,15 +381,15 @@ with tab_research:
 
     baseline_df = build_feature_df(
         bmi=bmi_r, age=age_r, waist=waist_r,
-        activity_label="Moderate",  # default
+        activity_label="Moderate",  # default; could expose later
         smoker_label="No",
         sbp=sbp_r, dbp=dbp_r, hr=hr_r,
         income_ratio=income_ratio_r,
         education_label=education_r,
         race_label=race_r, gender_label=gender_r
     )
-    baseline_X = prepare_for_model(baseline_df)
-    base_diab, base_ckd, base_cvd = predict_three(baseline_X)
+
+    base_diab, base_ckd, base_cvd = predict_three(baseline_df)
     st.markdown(
         f"Baseline predicted risks – Diabetes: **{base_diab[0]*100:.2f}%**, "
         f"CKD: **{base_ckd[0]*100:.2f}%**, CVD: **{base_cvd[0]*100:.2f}%**."
@@ -422,7 +420,7 @@ with tab_research:
     var_col, vmin, vmax, n_points = var_options[sens_label]
     vals = np.linspace(vmin, vmax, n_points)
 
-    sens_X = pd.concat([baseline_X] * n_points, ignore_index=True)
+    sens_X = pd.concat([baseline_df] * n_points, ignore_index=True)
     sens_X[var_col] = vals
 
     s_diab, s_ckd, s_cvd = predict_three(sens_X)
@@ -491,7 +489,7 @@ with tab_research:
     X_grid, Y_grid = np.meshgrid(x_vals, y_vals)
     n_grid = X_grid.size
 
-    grid_X = pd.concat([baseline_X] * n_grid, ignore_index=True)
+    grid_X = pd.concat([baseline_df] * n_grid, ignore_index=True)
     grid_X[x_col] = X_grid.ravel()
     grid_X[y_col] = Y_grid.ravel()
 
@@ -509,7 +507,10 @@ with tab_research:
         horizontal_spacing=0.06
     )
 
-    for idx, z in enumerate([z_diab, z_ckd, z_cvd], start=1):
+    for idx, (name, z) in enumerate(
+        [("Diabetes", z_diab), ("CKD", z_ckd), ("CVD", z_cvd)],
+        start=1
+    ):
         fig_heat.add_trace(
             go.Heatmap(
                 x=x_vals,
@@ -526,6 +527,7 @@ with tab_research:
     )
     for c in [1, 2, 3]:
         fig_heat.update_xaxes(title_text=heat_x_label, row=1, col=c)
+    for c in [1, 2, 3]:
         fig_heat.update_yaxes(title_text=heat_y_label, row=1, col=c)
 
     st.plotly_chart(fig_heat, use_container_width=True)
@@ -560,7 +562,7 @@ with tab_research:
 
         rng = np.random.default_rng(seed)
 
-        # ----- numeric variables to modify (additive change) -----
+        # ----- numeric variables to modify -----
         st.markdown("**Numeric variables to modify (additive change)**")
         numeric_mod_options = {
             "Age (years)": ("AgeYears", -20.0, 20.0, 1.0),
@@ -607,7 +609,7 @@ with tab_research:
                 list(mapping.keys()),
                 key=f"override_{col_name}"
             )
-            cat_overrides[col_name] = float(mapping[new_label])
+            cat_overrides[col_name] = mapping[new_label]
 
         # ----- stratification options -----
         st.markdown("**Stratify results by**")
@@ -666,23 +668,22 @@ with tab_research:
 
                 pop_df[col] = col_numeric
 
-            # ----- build baseline feature matrix -----
+            # prepare baseline feature matrix (the actual model inputs)
             base_X = prepare_for_model(pop_df)
-            b_diab, b_ckd, b_cvd = predict_three(base_X)
 
-            # ----- build scenario feature matrix from base_X -----
+            # apply numeric deltas and categorical overrides DIRECTLY to base_X
             scen_X = base_X.copy()
 
-            # numeric deltas
             for col_name, delta in numeric_deltas.items():
                 if col_name in scen_X.columns:
-                    scen_X[col_name] = scen_X[col_name] + delta
+                    scen_X[col_name] = scen_X[col_name] + float(delta)
 
-            # categorical overrides
             for col_name, new_val in cat_overrides.items():
                 if col_name in scen_X.columns:
-                    scen_X[col_name] = new_val
+                    scen_X[col_name] = float(new_val)
 
+            # model predictions
+            b_diab, b_ckd, b_cvd = predict_three(base_X)
             i_diab, i_ckd, i_cvd = predict_three(scen_X)
 
             # ---------- overall summary ----------
@@ -739,7 +740,7 @@ with tab_research:
             # ---------- subgroup summary ----------
             st.markdown(f"**Subgroup effects by {strat_option}**")
 
-            # build subgroup labels from *baseline* raw codes
+            # build subgroup labels from *baseline* pop_df
             if strat_option == "AgeYears (binned)":
                 if "AgeYears" in pop_df.columns:
                     subgroup_series = pd.cut(
@@ -767,7 +768,7 @@ with tab_research:
                     if col_name == "Gender":
                         subgroup_series = codes.map(gender_inv_map).fillna("Unknown")
                     elif col_name == "Race":
-                        subgroup_series = codes.map(race_inv_map).fillna("Unknown")
+                        subgroup_series = codes.map(race_code_to_label).fillna("Unknown")
                     elif col_name == "Education":
                         subgroup_series = codes.map(education_inv_map).fillna("Unknown")
                     elif col_name == "smoking":
@@ -811,7 +812,7 @@ with tab_research:
                 barmode="group",
                 xaxis_title=strat_option,
                 yaxis_title="Change in mean risk (scenario - baseline)",
-                margin=dict(l=40, r=40, t=80, b=80),
+                margin=dict(l=40, r=40, t=40, b=80),
                 legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
             )
 
