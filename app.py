@@ -331,6 +331,81 @@ def prepare_for_model(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ===========================
+# Plotly figure editor (Research tab only)
+# ===========================
+def apply_plotly_figure_editor(fig, key_prefix, default_title="", default_x="", default_y=""):
+    """
+    Optional per-figure editor used ONLY in the Researcher tools tab.
+
+    - User can toggle editor on/off.
+    - If off: figure is returned unchanged.
+    - If on: layout, fonts, bar width, zero-line, and Y-range can be adjusted.
+    """
+    with st.expander("Figure editor", expanded=False):
+        enable = st.checkbox("Enable editor", key=f"{key_prefix}_enable")
+        if not enable:
+            return fig
+
+        # Titles
+        title = st.text_input("Figure title", value=default_title, key=f"{key_prefix}_title")
+        x_title = st.text_input("X-axis title", value=default_x, key=f"{key_prefix}_x")
+        y_title = st.text_input("Y-axis title", value=default_y, key=f"{key_prefix}_y")
+
+        # Size
+        current_width = fig.layout.width or 1100
+        current_height = fig.layout.height or 650
+        width = st.slider(
+            "Figure width (px)", 600, 2000, int(current_width), key=f"{key_prefix}_width"
+        )
+        height = st.slider(
+            "Figure height (px)", 400, 1400, int(current_height), key=f"{key_prefix}_height"
+        )
+
+        # Fonts
+        title_size = st.slider("Title font size", 12, 40, 30, key=f"{key_prefix}_title_size")
+        axis_title_size = st.slider("Axis title font size", 10, 32, 24, key=f"{key_prefix}_axis_title_size")
+        tick_size = st.slider("Tick font size", 8, 28, 20, key=f"{key_prefix}_tick_size")
+        legend_size = st.slider("Legend font size", 8, 28, 20, key=f"{key_prefix}_legend_size")
+
+        # Y range
+        use_custom_y = st.checkbox("Use custom Y-axis range", False, key=f"{key_prefix}_use_custom_y")
+        y_min = st.number_input("Y-axis minimum", value=0.0, key=f"{key_prefix}_ymin")
+        y_max = st.number_input("Y-axis maximum", value=100.0, key=f"{key_prefix}_ymax")
+
+        # Zero line & bar width
+        show_zero = st.checkbox("Show horizontal zero line (keep layout shapes)", True,
+                                key=f"{key_prefix}_zero")
+        bar_width = st.slider("Bar width (for bar charts)", 0.2, 1.0, 0.8,
+                              key=f"{key_prefix}_bar_width")
+
+    # ---- Apply edits ----
+    fig.update_layout(
+        width=width,
+        height=height,
+        font=dict(size=tick_size),
+        title=dict(text=title, font=dict(size=title_size), x=0.0, xanchor="left"),
+        legend=dict(font=dict(size=legend_size)),
+    )
+    fig.update_xaxes(title_text=x_title, title_font=dict(size=axis_title_size), tickfont=dict(size=tick_size))
+    fig.update_yaxes(title_text=y_title, title_font=dict(size=axis_title_size), tickfont=dict(size=tick_size))
+
+    if use_custom_y:
+        fig.update_yaxes(range=[y_min, y_max])
+
+    # tweak bar width if applicable
+    for trace in fig.data:
+        if isinstance(trace, go.Bar):
+            trace.width = bar_width
+
+    # hide zero-line shapes if requested
+    if not show_zero:
+        fig.update_layout(shapes=[])
+
+    return fig
+
+
+
+# ===========================
 # Tabs
 # ===========================
 tab_calc, tab_research = st.tabs(["Risk calculator", "Researcher tools"])
@@ -869,8 +944,16 @@ with tab_research:
                 ]
             )
             fig_change = style_plotly_pub(fig_change)
+            fig_change = apply_plotly_figure_editor(
+                fig_change,
+                key_prefix="overall_change",
+                default_title="Overall relative change in mean predicted risk",
+                default_x="Disease",
+                default_y="Relative change in mean predicted risk (%)",
+            )
             st.plotly_chart(fig_change, use_container_width=True,
                             config=PLOTLY_DOWNLOAD_CONFIG)
+
 
             # ---------- subgroup summary ----------
             st.markdown(f"**Subgroup data prepared for stratification by {strat_option}**")
@@ -1013,8 +1096,16 @@ with tab_research:
             fig_sub.update_xaxes(tickangle=30)
 
             fig_sub = style_plotly_pub(fig_sub)
+            fig_sub = apply_plotly_figure_editor(
+                fig_sub,
+                key_prefix="subgroup_change",
+                default_title=f"Subgroup-specific relative change in mean risk for {disease_choice}",
+                default_x=f"{strat_label} subgroup",
+                default_y=f"Relative change in mean risk for {disease_choice} (%)",
+            )
             st.plotly_chart(fig_sub, use_container_width=True,
                             config=PLOTLY_DOWNLOAD_CONFIG)
+
 
             st.caption(
                 (
@@ -1209,8 +1300,19 @@ with tab_research:
                 fig_heat_pop.update_yaxes(showticklabels=False, row=1, col=c)
 
             fig_heat_pop = style_plotly_pub(fig_heat_pop)
+            fig_heat_pop = apply_plotly_figure_editor(
+                fig_heat_pop,
+                key_prefix="pop_heatmaps",
+                default_title=(
+                    f"Mean predicted risk (%) across {pop_heat_x_label} and "
+                    f"{pop_heat_y_label} in synthetic population"
+                ),
+                default_x=pop_heat_x_label,
+                default_y=pop_heat_y_label,
+            )
             st.plotly_chart(fig_heat_pop, use_container_width=True,
                             config=PLOTLY_DOWNLOAD_CONFIG)
+
             st.caption(
                 "Heatmaps show mean predicted risk in the synthetic population if everyone "
                 "had the specified pair of values for the two selected variables."
