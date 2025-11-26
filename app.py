@@ -6,6 +6,8 @@ import altair as alt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+pio.kaleido.scope.default_scale = 6   # insane resolution
+
 # ===========================
 # Load trained models
 # ===========================
