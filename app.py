@@ -61,6 +61,69 @@ def style_plotly_pub(fig, width=1100, height=650,
     )
     return fig
 
+def apply_plotly_figure_editor(
+    fig,
+    key_prefix: str,
+    default_title: str,
+    default_x: str,
+    default_y: str,
+):
+    """
+    Small per-figure editor: toggle on, then adjust title/x/y labels and font sizes.
+    Only used in the Researcher tools tab.
+    """
+    with st.expander("Figure editor", expanded=False):
+        enable_edit = st.checkbox("Enable figure editor", key=f"{key_prefix}_enable")
+        if enable_edit:
+            title = st.text_input(
+                "Figure title",
+                value=default_title,
+                key=f"{key_prefix}_title",
+            )
+            x_label = st.text_input(
+                "X-axis label",
+                value=default_x,
+                key=f"{key_prefix}_xlabel",
+            )
+            y_label = st.text_input(
+                "Y-axis label",
+                value=default_y,
+                key=f"{key_prefix}_ylabel",
+            )
+
+            title_size = st.slider(
+                "Title font size",
+                16, 40, 30,
+                key=f"{key_prefix}_title_size",
+            )
+            axis_title_size = st.slider(
+                "Axis title font size",
+                12, 32, 24,
+                key=f"{key_prefix}_axis_title_size",
+            )
+            tick_size = st.slider(
+                "Tick label font size",
+                10, 28, 20,
+                key=f"{key_prefix}_tick_size",
+            )
+            legend_size = st.slider(
+                "Legend font size",
+                10, 28, 20,
+                key=f"{key_prefix}_legend_size",
+            )
+
+            fig.update_layout(title=title)
+            fig.update_xaxes(title_text=x_label)
+            fig.update_yaxes(title_text=y_label)
+            fig = style_plotly_pub(
+                fig,
+                title_size=title_size,
+                axis_title_size=axis_title_size,
+                tick_size=tick_size,
+                legend_size=legend_size,
+            )
+
+    return fig
 
 def style_altair_pub(chart, title=None, width=900, height=500):
     """Make Altair charts big, with larger fonts and faint grids for export."""
@@ -873,6 +936,7 @@ with tab_research:
             i_diab, i_ckd, i_cvd = predict_three(scen_X)
 
             # ---------- overall summary ----------
+                       # ---------- overall summary ----------
             overall = pd.DataFrame({
                 "Disease": ["Diabetes", "CKD", "CVD"],
                 "Baseline_mean": [
@@ -896,63 +960,9 @@ with tab_research:
             overall["CI_low_%"] = [ci_diab[0], ci_ckd[0], ci_cvd[0]]
             overall["CI_high_%"] = [ci_diab[1], ci_ckd[1], ci_cvd[1]]
 
-            st.markdown("**Overall average predicted risk (baseline vs scenario)**")
-            st.dataframe(
-                overall.style.format({
-                    "Baseline_mean": "{:.5f}",
-                    "Scenario_mean": "{:.5f}",
-                    "Absolute_change": "{:.5f}",
-                    "Relative_change_%": "{:.2f}",
-                    "CI_low_%": "{:.2f}",
-                    "CI_high_%": "{:.2f}",
-                }),
-                use_container_width=True
-            )
+            # Store for later rendering (outside the button)
+            st.session_state["overall_df"] = overall
 
-            # ---------- % change bar chart with CIs ----------
-            fig_change = go.Figure()
-            rel_vals = overall["Relative_change_%"].values.astype(float)
-            err_plus = (overall["CI_high_%"] - overall["Relative_change_%"]).values.astype(float)
-            err_minus = (overall["Relative_change_%"] - overall["CI_low_%"]).values.astype(float)
-
-            fig_change.add_trace(
-                go.Bar(
-                    x=overall["Disease"],
-                    y=rel_vals,
-                    marker=dict(color=COLOR_BAR),
-                    error_y=dict(
-                        type="data",
-                        array=err_plus,
-                        arrayminus=err_minus,
-                        visible=True,
-                        thickness=1.5,
-                    ),
-                )
-            )
-            fig_change.update_layout(
-                title="Overall relative change in mean predicted risk",
-                yaxis_title="Relative change in mean predicted risk (%)",
-                xaxis_title="Disease",
-                margin=dict(l=60, r=20, t=80, b=60),
-                shapes=[
-                    dict(
-                        type="line",
-                        x0=-0.5, x1=2.5,
-                        y0=0, y1=0,
-                        line=dict(color=ZERO_LINE_COLOR, dash="dash", width=2),
-                    )
-                ]
-            )
-            fig_change = style_plotly_pub(fig_change)
-            fig_change = apply_plotly_figure_editor(
-                fig_change,
-                key_prefix="overall_change",
-                default_title="Overall relative change in mean predicted risk",
-                default_x="Disease",
-                default_y="Relative change in mean predicted risk (%)",
-            )
-            st.plotly_chart(fig_change, use_container_width=True,
-                            config=PLOTLY_DOWNLOAD_CONFIG)
 
 
             # ---------- subgroup summary ----------
@@ -1014,6 +1024,71 @@ with tab_research:
                 "Use the controls below to examine how different subgroups and global shifts "
                 "affect these changes."
             )
+                # ---------- Render overall summary + chart (persists after button click) ----------
+        if "overall_df" in st.session_state:
+            overall = st.session_state["overall_df"]
+
+            st.markdown("**Overall average predicted risk (baseline vs scenario)**")
+            st.dataframe(
+                overall.style.format({
+                    "Baseline_mean": "{:.5f}",
+                    "Scenario_mean": "{:.5f}",
+                    "Absolute_change": "{:.5f}",
+                    "Relative_change_%": "{:.2f}",
+                    "CI_low_%": "{:.2f}",
+                    "CI_high_%": "{:.2f}",
+                }),
+                use_container_width=True
+            )
+
+            # % change bar chart with CIs
+            fig_change = go.Figure()
+            rel_vals = overall["Relative_change_%"].values.astype(float)
+            err_plus = (overall["CI_high_%"] - overall["Relative_change_%"]).values.astype(float)
+            err_minus = (overall["Relative_change_%"] - overall["CI_low_%"]).values.astype(float)
+
+            fig_change.add_trace(
+                go.Bar(
+                    x=overall["Disease"],
+                    y=rel_vals,
+                    marker=dict(color=COLOR_BAR),
+                    error_y=dict(
+                        type="data",
+                        array=err_plus,
+                        arrayminus=err_minus,
+                        visible=True,
+                        thickness=1.5,
+                    ),
+                )
+            )
+            fig_change.update_layout(
+                title="Overall relative change in mean predicted risk",
+                yaxis_title="Relative change in mean predicted risk (%)",
+                xaxis_title="Disease",
+                margin=dict(l=60, r=20, t=80, b=60),
+                shapes=[
+                    dict(
+                        type="line",
+                        x0=-0.5, x1=2.5,
+                        y0=0, y1=0,
+                        line=dict(color=ZERO_LINE_COLOR, dash="dash", width=2),
+                    )
+                ]
+            )
+
+            fig_change = style_plotly_pub(fig_change)
+
+            # 🔧 Attach figure editor HERE
+            fig_change = apply_plotly_figure_editor(
+                fig_change,
+                key_prefix="overall_change",
+                default_title="Overall relative change in mean predicted risk",
+                default_x="Disease",
+                default_y="Relative change in mean predicted risk (%)",
+            )
+
+            st.plotly_chart(fig_change, use_container_width=True,
+                            config=PLOTLY_DOWNLOAD_CONFIG)
 
         # ------------------ Subgroup contributions plot ------------------
         if "df_sub" in st.session_state:
@@ -1116,6 +1191,7 @@ with tab_research:
             )
 
         # ------------------ Population 1D sensitivity ------------------
+                # ------------------ Population 1D sensitivity ------------------
         if "base_X" in st.session_state:
             st.markdown("---")
             st.subheader("Population-level one-dimensional sensitivity")
@@ -1169,35 +1245,63 @@ with tab_research:
 
             pop_sens_df = pd.DataFrame(rows)
 
-            base_chart = alt.Chart(pop_sens_df).encode(
-                x=alt.X("Value:Q", title=pop_sens_label),
-                color=alt.Color(
-                    "Disease:N",
-                    title=None,
-                    scale=alt.Scale(
-                        domain=["Diabetes", "CKD", "CVD"],
-                        range=[COLOR_DIAB, COLOR_CKD, COLOR_CVD],
-                    ),
-                ),
+            # -------- Plotly version with per-disease line + CI error bars --------
+            fig_pop_sens = go.Figure()
+
+            color_map = {
+                "Diabetes": COLOR_DIAB,
+                "CKD": COLOR_CKD,
+                "CVD": COLOR_CVD,
+            }
+
+            for disease_name in ["Diabetes", "CKD", "CVD"]:
+                sub = pop_sens_df[pop_sens_df["Disease"] == disease_name].sort_values("Value")
+                x_vals_plot = sub["Value"].values
+                y_vals_plot = sub["Mean_risk_pct"].values
+                err_plus = (sub["CI_high"] - sub["Mean_risk_pct"]).values
+                err_minus = (sub["Mean_risk_pct"] - sub["CI_low"]).values
+
+                fig_pop_sens.add_trace(
+                    go.Scatter(
+                        x=x_vals_plot,
+                        y=y_vals_plot,
+                        mode="lines",
+                        name=disease_name,
+                        line=dict(width=3, color=color_map.get(disease_name, COLOR_BAR)),
+                        error_y=dict(
+                            type="data",
+                            array=err_plus,
+                            arrayminus=err_minus,
+                            visible=True,
+                            thickness=1.3,
+                        ),
+                    )
+                )
+
+            fig_pop_sens.update_layout(
+                title=f"Population mean predicted risk vs {pop_sens_label}",
+                xaxis_title=pop_sens_label,
+                yaxis_title="Mean predicted risk in population (%)",
+                margin=dict(l=60, r=20, t=80, b=60),
             )
 
-            band = base_chart.mark_area(opacity=0.15).encode(
-                y="CI_low:Q",
-                y2="CI_high:Q"
+            fig_pop_sens = style_plotly_pub(fig_pop_sens)
+
+            # 🔧 Figure editor toggle for this plot
+            fig_pop_sens = apply_plotly_figure_editor(
+                fig_pop_sens,
+                key_prefix="pop_1d_sensitivity",
+                default_title=f"Population mean predicted risk vs {pop_sens_label}",
+                default_x=pop_sens_label,
+                default_y="Mean predicted risk in population (%)",
             )
 
-            line = base_chart.mark_line(size=3).encode(
-                y=alt.Y("Mean_risk_pct:Q", title="Mean predicted risk in population (%)")
-            )
+            st.plotly_chart(fig_pop_sens, use_container_width=True,
+                            config=PLOTLY_DOWNLOAD_CONFIG)
 
-            pop_sens_chart = style_altair_pub(
-                band + line,
-                title=f"Population mean predicted risk vs {pop_sens_label}"
-            )
-            st.altair_chart(pop_sens_chart, use_container_width=True)
             st.caption(
                 "Curves show mean modelled risk in the synthetic population if everyone "
-                f"had the specified value of {pop_sens_label}. Shaded ribbons are 95% CIs "
+                f"had the specified value of {pop_sens_label}. Error bars are 95% CIs "
                 "for the mean risk at each value."
             )
 
