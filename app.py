@@ -790,6 +790,43 @@ with tab_calc:
 #                 TAB 2: RESEARCHER TOOLS (POPULATION-BASED)
 # ============================================================
 with tab_research:
+    # --- Terms of use gate for Researcher tools tab ---
+    if "researcher_agreed" not in st.session_state:
+        st.session_state["researcher_agreed"] = False
+
+    if not st.session_state["researcher_agreed"]:
+        st.markdown("### Terms of use for Researcher tools")
+        st.markdown(
+            """
+            By using the **Researcher tools** in this app, you agree to the following:
+
+            1. For exploratory analysis or usage of **up to two figures or tables** created by this model,
+               you will **cite**:
+
+               **Costa, AM and Iris, BD. Nature Scientific Reviews. 2025.**
+
+            2. For **any further use** of this tool, its outputs, or figures/tables beyond this exploratory
+               limit (including use in manuscripts, preprints, talks, or derivative tools), you agree to
+               **invite Arthur M. Costa (arthurcosta@uchicago.edu) as a co-author** and to discuss appropriate
+               authorship and contributions in advance.
+            """
+        )
+
+        with st.form("researcher_terms_form"):
+            agree = st.checkbox(
+                "I have read and agree to these terms.",
+                key="researcher_terms_checkbox",
+            )
+            submitted = st.form_submit_button("Continue to Researcher tools")
+
+        if submitted and agree:
+            st.session_state["researcher_agreed"] = True
+        else:
+            if submitted and not agree:
+                st.warning("You must agree to the terms above to use the Researcher tools.")
+            # Stop rendering anything else in this tab until they agree
+            st.stop()
+
     st.title("Researcher tools & population sensitivity")
     st.caption(
         "All tools in this tab use a synthetic population sampled from NHANES. "
