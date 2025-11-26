@@ -1025,6 +1025,7 @@ with tab_research:
                 "affect these changes."
             )
                 # ---------- Render overall summary + chart (persists after button click) ----------
+                # ---------- Render overall table + bar chart (persistent, editable) ----------
         if "overall_df" in st.session_state:
             overall = st.session_state["overall_df"]
 
@@ -1041,7 +1042,6 @@ with tab_research:
                 use_container_width=True
             )
 
-            # % change bar chart with CIs
             fig_change = go.Figure()
             rel_vals = overall["Relative_change_%"].values.astype(float)
             err_plus = (overall["CI_high_%"] - overall["Relative_change_%"]).values.astype(float)
@@ -1075,13 +1075,12 @@ with tab_research:
                     )
                 ]
             )
-
             fig_change = style_plotly_pub(fig_change)
 
-            # 🔧 Attach figure editor HERE
+            # 🔧 Figure editor for the overall bar chart
             fig_change = apply_plotly_figure_editor(
                 fig_change,
-                key_prefix="overall_change",
+                key_prefix="overall_rel_change",
                 default_title="Overall relative change in mean predicted risk",
                 default_x="Disease",
                 default_y="Relative change in mean predicted risk (%)",
@@ -1089,6 +1088,12 @@ with tab_research:
 
             st.plotly_chart(fig_change, use_container_width=True,
                             config=PLOTLY_DOWNLOAD_CONFIG)
+
+       # if "overall_df" in st.session_state:
+            overall = st.session_state["overall_df"]
+                    # store overall summary so it can be rendered (and edited) without recomputing
+        #st.session_state["overall_df"] = overall
+
 
         # ------------------ Subgroup contributions plot ------------------
         if "df_sub" in st.session_state:
@@ -1245,7 +1250,7 @@ with tab_research:
 
             pop_sens_df = pd.DataFrame(rows)
 
-            # -------- Plotly version with per-disease line + CI error bars --------
+                        # -------- Plotly version with per-disease line + CI ribbons --------
             fig_pop_sens = go.Figure()
 
             color_map = {
@@ -1257,24 +1262,47 @@ with tab_research:
             for disease_name in ["Diabetes", "CKD", "CVD"]:
                 sub = pop_sens_df[pop_sens_df["Disease"] == disease_name].sort_values("Value")
                 x_vals_plot = sub["Value"].values
-                y_vals_plot = sub["Mean_risk_pct"].values
-                err_plus = (sub["CI_high"] - sub["Mean_risk_pct"]).values
-                err_minus = (sub["Mean_risk_pct"] - sub["CI_low"]).values
+                mean_vals = sub["Mean_risk_pct"].values
+                ci_low = sub["CI_low"].values
+                ci_high = sub["CI_high"].values
+                col = color_map.get(disease_name, COLOR_BAR)
 
+                # lower CI bound (invisible line)
                 fig_pop_sens.add_trace(
                     go.Scatter(
                         x=x_vals_plot,
-                        y=y_vals_plot,
+                        y=ci_low,
+                        mode="lines",
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo="skip",
+                        name=f"{disease_name} CI low",
+                    )
+                )
+
+                # upper CI bound with fill → ribbon
+                fig_pop_sens.add_trace(
+                    go.Scatter(
+                        x=x_vals_plot,
+                        y=ci_high,
+                        mode="lines",
+                        line=dict(width=0),
+                        fill="tonexty",
+                        fillcolor=col + "33",  # add some transparency
+                        showlegend=False,
+                        hoverinfo="skip",
+                        name=f"{disease_name} CI high",
+                    )
+                )
+
+                # mean line on top
+                fig_pop_sens.add_trace(
+                    go.Scatter(
+                        x=x_vals_plot,
+                        y=mean_vals,
                         mode="lines",
                         name=disease_name,
-                        line=dict(width=3, color=color_map.get(disease_name, COLOR_BAR)),
-                        error_y=dict(
-                            type="data",
-                            array=err_plus,
-                            arrayminus=err_minus,
-                            visible=True,
-                            thickness=1.3,
-                        ),
+                        line=dict(width=3, color=col),
                     )
                 )
 
@@ -1301,9 +1329,10 @@ with tab_research:
 
             st.caption(
                 "Curves show mean modelled risk in the synthetic population if everyone "
-                f"had the specified value of {pop_sens_label}. Error bars are 95% CIs "
+                f"had the specified value of {pop_sens_label}. Shaded ribbons are 95% CIs "
                 "for the mean risk at each value."
             )
+
 
         # ------------------ Population 2D heatmaps ------------------
         if "base_X" in st.session_state:
