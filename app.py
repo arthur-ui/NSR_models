@@ -857,7 +857,15 @@ with tab_research:
 
         colP1, colP2, colP3 = st.columns(3)
         with colP1:
-            pop_n = st.slider("Population size", 500, 10000, 3000, step=500, key="pop_n")
+            max_n = int(min(10000, nhanes_sim.shape[0]))
+            pop_n = st.slider(
+                "Population size",
+                min_value=500,
+                max_value=max_n,
+                value=min(3000, max_n),
+                step=500,
+                key="pop_n",
+            )
         with colP2:
             jitter_pct = st.slider("Jitter on continuous vars (%)", 0.0, 20.0, 5.0, step=1.0)
         with colP3:
@@ -932,9 +940,10 @@ with tab_research:
 
         if st.button("Run population scenario", key="run_sim"):
             # --- draw sample of real NHANES rows ---
-            available_idx = nhanes_sim.index
-            sampled_idx = rng.choice(available_idx, size=pop_n, replace=True)
+            available_idx = nhanes_sim.index.to_numpy()
+            sampled_idx = rng.choice(available_idx, size=pop_n, replace=False)
             pop_df = nhanes_sim.loc[sampled_idx].copy()
+
 
             # ensure required columns exist
             for col in FEATURE_COLS:
