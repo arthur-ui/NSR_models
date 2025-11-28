@@ -9,12 +9,16 @@ from plotly.subplots import make_subplots
 # ===========================
 # Global colour palette & styles
 # ===========================
-COLOR_DIAB = "#d62728"      # Diabetes – red
-COLOR_CKD = "#1f77b4"       # CKD – dark blue
-COLOR_CVD = "#4da6ff"       # CVD – light blue
-COLOR_BAR = "#1f77b4"       # Default bar colour
+# ===========================
+# Global colour palette & styles
+# ===========================
+COLOR_DIAB = "#1f77b4"   # Diabetes – blue
+COLOR_CKD  = "#ff7f0e"   # CKD – orange
+COLOR_CVD  = "#2ca02c"   # CVD – green
+COLOR_BAR  = "#1f77b4"   # Default bar colour (optional)
 GRID_COLOR = "rgba(0,0,0,0.08)"
 ZERO_LINE_COLOR = "rgba(80,80,80,0.85)"
+
 
 def hex_to_rgba(hex_color: str, alpha: float) -> str:
     """Convert a '#rrggbb' hex color to an 'rgba(r,g,b,a)' string."""
@@ -1372,9 +1376,9 @@ with tab_research:
                 )
 
             fig_pop_sens.update_layout(
-                title=f"Population mean predicted risk vs {pop_sens_label}",
-                xaxis_title=pop_sens_label,
-                yaxis_title="Mean predicted risk in population (%)",
+                title=f"Model-predicted mean risk by {pop_sens_label.split('(')[0].strip().lower()}",
+                xaxis_title=pop_sens_label,  # e.g. "Age (years)"
+                yaxis_title="Mean model-predicted probability (%)",
                 margin=dict(l=60, r=20, t=80, b=60),
             )
 
@@ -1384,9 +1388,9 @@ with tab_research:
             fig_pop_sens = apply_plotly_figure_editor(
                 fig_pop_sens,
                 key_prefix="pop_1d_sensitivity",
-                default_title=f"Population mean predicted risk vs {pop_sens_label}",
+                default_title=f"Model-predicted mean risk by {pop_sens_label.split('(')[0].strip().lower()}",
                 default_x=pop_sens_label,
-                default_y="Mean predicted risk in population (%)",
+                default_y="Mean model-predicted probability (%)",
             )
 
             st.plotly_chart(fig_pop_sens, use_container_width=True,
