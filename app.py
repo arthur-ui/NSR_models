@@ -14,6 +14,13 @@ import altair as alt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+import os
+import json
+import gspread
+from google.oauth2.service_account import Credentials
+import datetime
+
+
 # 🔧 Add this class so joblib can unpickle your models
 class CalibratedPipeline:
     """
@@ -48,6 +55,84 @@ COLOR_CVD  = "#2ca02c"   # CVD – green
 COLOR_BAR  = "#1f77b4"   # Default bar colour (optional)
 GRID_COLOR = "rgba(0,0,0,0.08)"
 ZERO_LINE_COLOR = "rgba(80,80,80,0.85)"
+
+SHEET_KEY = "1lXyGAJm5MoO_NDhdBbI6u_o0C7vCLNGfI77MPipw8c8"
+
+@st.cache_resource
+def get_gsheet_worksheet():
+    """
+    Authorize with Google using service-account JSON stored in an env var on Render.
+    Return the first worksheet in the sheet.
+    """
+    service_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not service_json:
+        raise RuntimeError(
+            "GOOGLE_SERVICE_ACCOUNT_JSON not found — add it as an env var in Render."
+        )
+
+    service_info = json.loads(service_json)
+
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(service_info, scopes=scopes)
+
+    client = gspread.authorize(creds)
+    sh = client.open_by_key(SHEET_KEY)
+    return sh.sheet1
+def log_individual_prediction(
+    bmi, age, waist, activity_label, smoker_label,
+    sbp, dbp, hr, income_ratio, education_label,
+    race_label, gender_label,
+    p_diab, p_ckd, p_cvd,
+):
+    """
+    Append a single anonymized row to the Google Sheet.
+    """
+    try:
+        ws = get_gsheet_worksheet()
+
+        # Bin sensitive vars to further anonymize
+        def age_bin(a):
+            if a < 30: return "<30"
+            elif a < 45: return "30–44"
+            elif a < 60: return "45–59"
+            elif a < 75: return "60–74"
+            else: return "75+"
+
+        def bmi_bin(b):
+            if b < 18.5: return "<18.5"
+            elif b < 25: return "18.5–24.9"
+            elif b < 30: return "25–29.9"
+            else: return ">=30"
+
+        timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+
+        row = [
+            timestamp,
+            age_bin(age),
+            bmi_bin(bmi),
+            float(waist),
+            activity_label,
+            smoker_label,
+            float(sbp),
+            float(dbp),
+            float(hr),
+            float(income_ratio),
+            education_label,
+            race_label,
+            gender_label,
+            float(p_diab) * 100.0,
+            float(p_ckd) * 100.0,
+            float(p_cvd) * 100.0,
+        ]
+
+        ws.append_row(row, value_input_option="USER_ENTERED")
+
+    except Exception as e:
+        st.warning(f"(Logging error: {e})")
+
 
 
 def hex_to_rgba(hex_color: str, alpha: float) -> str:
@@ -616,15 +701,35 @@ with tab_calc:
                 income_ratio=income_ratio, education_label=education,
                 race_label=race, gender_label=gender
             )
-
+        
             X_model = prepare_for_model(X)
             p_diab, p_ckd, p_cvd = predict_three(X_model)
-
+        
+            # ---- NEW: log anonymized user input + model outputs ----
+            log_individual_prediction(
+                bmi=bmi,
+                age=age,
+                waist=waist,
+                activity_label=activity,
+                smoker_label=smoker,
+                sbp=sbp,
+                dbp=dbp,
+                hr=hr,
+                income_ratio=income_ratio,
+                education_label=education,
+                race_label=race,
+                gender_label=gender,
+                p_diab=float(p_diab[0]),
+                p_ckd=float(p_ckd[0]),
+                p_cvd=float(p_cvd[0]),
+            )
+        
+            # ---- existing display code ----
             r1, r2, r3 = st.columns(3)
             r1.metric("Diabetes risk", f"{p_diab[0]*100:.1f}%")
             r2.metric("CKD risk", f"{p_ckd[0]*100:.1f}%")
             r3.metric("CVD risk", f"{p_cvd[0]*100:.1f}%")
-
+        
             st.caption("These estimates are based solely on non-dietary predictors.")
 
         st.markdown("---")
