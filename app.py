@@ -1,32 +1,22 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import joblib
-import altair as alt
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-import joblib
-import altair as alt
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
 import os
 import json
+import datetime
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
+import altair as alt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import gspread
 from google.oauth2.service_account import Credentials
-import datetime
 
 
 # 🔧 Add this class so joblib can unpickle your models
 class CalibratedPipeline:
-    """
-    Wraps a fitted sklearn Pipeline (with predict_proba)
-    and an IsotonicRegression calibrator.
-    """
+    """Wraps a fitted sklearn Pipeline (with predict_proba)
+    and an IsotonicRegression calibrator."""
     def __init__(self, base, calibrator):
         self.base = base
         self.calibrator = calibrator
@@ -46,9 +36,6 @@ class CalibratedPipeline:
 # ===========================
 # Global colour palette & styles
 # ===========================
-# ===========================
-# Global colour palette & styles
-# ===========================
 COLOR_DIAB = "#1f77b4"   # Diabetes – blue
 COLOR_CKD  = "#ff7f0e"   # CKD – orange
 COLOR_CVD  = "#2ca02c"   # CVD – green
@@ -57,18 +44,15 @@ GRID_COLOR = "rgba(0,0,0,0.08)"
 ZERO_LINE_COLOR = "rgba(80,80,80,0.85)"
 
 
+# ===========================
+# Google Sheets logging
+# ===========================
 SHEET_KEY = "1lXyGAJm5MoO_NDhdBbI6u_o0C7vCLNGfI77MPipw8c8"
 
 @st.cache_resource
 def get_gsheet_worksheet():
-    """
-    Authorize with Google using service-account JSON stored in an env var on Render.
-    Returns the first worksheet, or None if logging is not available.
-    """
-    import os, json
-    from google.oauth2.service_account import Credentials
-    import gspread
-
+    """Authorize with Google using service-account JSON stored in an env var.
+    Returns the first worksheet, or None if logging is not available."""
     # 1) Check env var
     service_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not service_json:
@@ -98,16 +82,15 @@ def get_gsheet_worksheet():
         st.write("Connection error:", repr(e))
         return None
 
+
 def log_individual_prediction(
     bmi, age, waist, activity_label, smoker_label,
     sbp, dbp, hr, income_ratio, education_label,
     race_label, gender_label,
     p_diab, p_ckd, p_cvd,
 ):
-    """
-    Append a single anonymized row to the Google Sheet.
-    If anything goes wrong, show a detailed error but do not crash the app.
-    """
+    """Append a single anonymized row to the Google Sheet.
+    If anything goes wrong, show a detailed error but do not crash the app."""
     try:
         ws = get_gsheet_worksheet()
         if ws is None:
@@ -116,17 +99,26 @@ def log_individual_prediction(
 
         # Bin vars to reduce identifiability
         def age_bin(a):
-            if a < 30: return "<30"
-            elif a < 45: return "30–44"
-            elif a < 60: return "45–59"
-            elif a < 75: return "60–74"
-            else: return "75+"
+            if a < 30:
+                return "<30"
+            elif a < 45:
+                return "30–44"
+            elif a < 60:
+                return "45–59"
+            elif a < 75:
+                return "60–74"
+            else:
+                return "75+"
 
         def bmi_bin(b):
-            if b < 18.5: return "<18.5"
-            elif b < 25: return "18.5–24.9"
-            elif b < 30: return "25–29.9"
-            else: return ">=30"
+            if b < 18.5:
+                return "<18.5"
+            elif b < 25:
+                return "18.5–24.9"
+            elif b < 30:
+                return "25–29.9"
+            else:
+                return ">=30"
 
         timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M")
 
@@ -152,7 +144,6 @@ def log_individual_prediction(
         ws.append_row(row, value_input_option="USER_ENTERED")
 
     except Exception as e:
-        # Now we actually show the exception info
         st.error("Logging error: could not append row to Google Sheet.")
         st.write("Append error:", repr(e))
 
