@@ -162,6 +162,7 @@ def get_gsheet_worksheet():
 
 
 def log_individual_prediction(
+    mode,  # "real_data" or "exploration"
     bmi, age, waist, activity_label, smoker_label,
     sbp, dbp, hr, income_ratio, education_label,
     race_label, gender_label,
@@ -172,6 +173,13 @@ def log_individual_prediction(
 
     All inputs are stored as coarse bins; only the model-predicted risks
     are stored as exact percentages. No timestamp or direct identifiers.
+
+    Sheet header should be:
+
+    mode,age_bin,bmi_bin,waist_bin,activity,smoker,
+    sbp_bin,dbp_bin,hr_bin,income_ratio_bin,
+    education,race,gender,
+    diab_risk_pct,ckd_risk_pct,cvd_risk_pct
     """
     try:
         ws = get_gsheet_worksheet()
@@ -180,33 +188,30 @@ def log_individual_prediction(
             return
 
         row = [
-            bin_age(age),                 # age_bin
-            bin_bmi(bmi),                 # bmi_bin
-            bin_waist(waist),             # waist_bin
-            activity_label,               # activity (Low/Moderate/High)
-            smoker_label,                 # smoker (Yes/No)
-            bin_sbp(sbp),                 # sbp_bin
-            bin_dbp(dbp),                 # dbp_bin
-            bin_hr(hr),                   # hr_bin
+            mode,                        # mode: "real_data" or "exploration"
+            bin_age(age),                # age_bin
+            bin_bmi(bmi),                # bmi_bin
+            bin_waist(waist),            # waist_bin
+            activity_label,              # activity (Low/Moderate/High)
+            smoker_label,                # smoker (Yes/No)
+            bin_sbp(sbp),                # sbp_bin
+            bin_dbp(dbp),                # dbp_bin
+            bin_hr(hr),                  # hr_bin
             bin_income_ratio(income_ratio),  # income_ratio_bin
-            education_label,              # education (NHANES categories)
-            race_label,                   # race/ethnicity (4 cats)
-            gender_label,                 # gender
-            float(p_diab) * 100.0,        # diab_risk_pct
-            float(p_ckd) * 100.0,         # ckd_risk_pct
-            float(p_cvd) * 100.0,         # cvd_risk_pct
+            education_label,             # education (NHANES categories)
+            race_label,                  # race/ethnicity (4 cats)
+            gender_label,                # gender
+            float(p_diab) * 100.0,       # diab_risk_pct
+            float(p_ckd) * 100.0,        # ckd_risk_pct
+            float(p_cvd) * 100.0,        # cvd_risk_pct
         ]
-
-        # Sheet header should be:
-        # age_bin,bmi_bin,waist_bin,activity,smoker,sbp_bin,dbp_bin,hr_bin,
-        # income_ratio_bin,education,race,gender,
-        # diab_risk_pct,ckd_risk_pct,cvd_risk_pct
 
         ws.append_row(row, value_input_option="USER_ENTERED")
 
     except Exception as e:
         st.error("Logging error: could not append row to Google Sheet.")
         st.write("Append error:", repr(e))
+
 
 
 
@@ -771,6 +776,15 @@ with tab_calc:
             "Race/ethnicity",
             ["Non-Hispanic White", "Non-Hispanic Black", "Hispanic", "Other"]
         )
+
+                # ---------------- Mode: real data vs exploring ----------------
+        st.markdown("**How are you using the calculator today?**")
+        using_real_info = st.checkbox(
+            "I am entering my real information today",
+            value=False,
+            help="If unchecked, your entry will be logged as exploratory use."
+        )
+        mode = "real_data" if using_real_info else "exploration"
 
         # ---------------- Predict ----------------
         if st.button("Estimate risks", key="calc_button"):
