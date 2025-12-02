@@ -124,7 +124,6 @@ ZERO_LINE_COLOR = "rgba(80,80,80,0.85)"
 SHEET_KEY = "1lXyGAJm5MoO_NDhdBbI6u_o0C7vCLNGfI77MPipw8c8"
 
 @st.cache_resource
-@st.cache_resource
 def get_gsheet_worksheet():
     """Authorize with Google using service-account JSON stored in an env var.
     Returns the first worksheet, or None if logging is not available."""
@@ -143,7 +142,7 @@ def get_gsheet_worksheet():
 
     # Show which service account we are using (for debugging)
     sa_email = service_info.get("client_email", "UNKNOWN")
-    st.write("Using service account:", sa_email)
+    
 
     # Build credentials and open sheet
     try:
@@ -233,6 +232,8 @@ PLOTLY_DOWNLOAD_CONFIG = {
         "scale": 5,
     }
 }
+
+st.write("By using this app, you agree to the collection of anonymous, non-identifiable usage data (binned inputs and model-estimated risk outputs) for research purposes. No personal identifiers are collected.")
 
 
 def style_plotly_pub(fig, width=1100, height=650,
