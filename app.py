@@ -789,7 +789,7 @@ with tab_calc:
             help="This only affects how your data are logged for research; it does not change your risk estimates."
         )
         
-        # Convert selection into mode variable
+        #Convert selection into mode variable
         if mode_choice is None:
             mode = None
         elif "real" in mode_choice:
@@ -803,24 +803,30 @@ with tab_calc:
        
 
         # ---------------- Predict ----------------
+        # ---------------- Predict ----------------
         if st.button("Estimate risks", key="calc_button"):
+            # Force them to choose a mode first
             if mode is None:
-                st.warning("Please select whether you're using real information or exploring before continuing.")
+                st.warning(
+                    "Please select whether you're using real information or just exploring before continuing."
+                )
                 st.stop()
-        else:
+        
+            # 1) Build features
             X = build_feature_df(
                 bmi=bmi, age=age, waist=waist, activity_label=activity,
                 smoker_label=smoker, sbp=sbp, dbp=dbp, hr=hr,
                 income_ratio=income_ratio, education_label=education,
                 race_label=race, gender_label=gender
             )
-
+        
+            # 2) Predict
             X_model = prepare_for_model(X)
             p_diab, p_ckd, p_cvd = predict_three(X_model)
-
-            # ---- log anonymized user input + model outputs ----
+        
+            # 3) Log (now with mode)
             log_individual_prediction(
-                mode=mode,              # ✅ NEW REQUIRED ARG
+                mode=mode,              # ✅ NEW ARG
                 bmi=bmi,
                 age=age,
                 waist=waist,
@@ -837,14 +843,15 @@ with tab_calc:
                 p_ckd=float(p_ckd[0]),
                 p_cvd=float(p_cvd[0]),
             )
-
-            # ---- existing display code ----
+        
+            # 4) Display
             r1, r2, r3 = st.columns(3)
             r1.metric("Diabetes risk", f"{p_diab[0]*100:.1f}%")
             r2.metric("CKD risk", f"{p_ckd[0]*100:.1f}%")
             r3.metric("CVD risk", f"{p_cvd[0]*100:.1f}%")
-
+        
             st.caption("These estimates are based solely on non-dietary predictors.")
+
 
     # ---------------------------
     # B. Individual sensitivity analysis
